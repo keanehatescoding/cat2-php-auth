@@ -1,0 +1,4 @@
+#!/bin/sh
+# Lambda custom runtime entry point. Starts the PHP runtime loop.
+set -e
+exec /usr/bin/php /var/task/runtime.php
