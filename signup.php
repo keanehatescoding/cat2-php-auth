@@ -38,7 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // 23000 = integrity constraint violation (duplicate username/email)
             $errors[] = $ex->getCode() === '23000'
                 ? 'That username or email is already registered.'
-                : 'Could not create account: ' . $ex->getMessage();
+                : 'Could not create account. Please try again later.';
         }
     }
 }
