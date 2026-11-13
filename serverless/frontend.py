@@ -66,7 +66,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
-        except (urllib.error.URLError, ValueError) as exc:
+        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
             self._send(502, f"<p>Function unavailable: {html.escape(str(exc))}</p>")
             return
 

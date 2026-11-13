@@ -13,8 +13,22 @@ function handle(array $event): array
 
     // The feedback form posts application/x-www-form-urlencoded data.
     parse_str($body, $form);
-    $name = trim((string) ($form['name'] ?? ''));
-    $message = trim((string) ($form['message'] ?? ''));
+    $name = $form['name'] ?? '';
+    $message = $form['message'] ?? '';
+
+    // parse_str() turns repeated keys such as message[] into arrays. Reject those,
+    // and reject bytes that are not valid UTF-8, because json_encode() would fail on them.
+    if (!is_string($name) || !is_string($message)
+        || !mb_check_encoding($name, 'UTF-8') || !mb_check_encoding($message, 'UTF-8')) {
+        return [
+            'statusCode' => 400,
+            'headers' => $json,
+            'body' => json_encode(['error' => 'name and message must be plain UTF-8 text']),
+        ];
+    }
+
+    $name = trim($name);
+    $message = trim($message);
 
     if ($name === '' || $message === '') {
         return [
