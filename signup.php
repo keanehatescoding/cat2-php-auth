@@ -36,9 +36,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $username = $email = '';
         } catch (PDOException $ex) {
             // 23000 = integrity constraint violation (duplicate username/email)
+            if ($ex->getCode() !== '23000') {
+                error_log('signup insert failed: ' . $ex->getMessage());
+            }
             $errors[] = $ex->getCode() === '23000'
                 ? 'That username or email is already registered.'
-                : 'Could not create account: ' . $ex->getMessage();
+                : 'Could not create account. Please try again later.';
         }
     }
 }
