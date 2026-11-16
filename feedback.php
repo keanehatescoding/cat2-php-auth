@@ -7,28 +7,32 @@ $errors = [];
 $saved = false;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name    = trim($_POST['name'] ?? '');
-    $message = trim($_POST['message'] ?? '');
+    if (!csrf_valid($_POST['csrf_token'] ?? '')) {
+        $errors[] = 'Invalid form submission. Please try again.';
+    } else {
+        $name    = trim($_POST['name'] ?? '');
+        $message = trim($_POST['message'] ?? '');
 
-    if ($name === '' || mb_strlen($name) > 100) {
-        $errors[] = 'Name is required (max 100 characters).';
-    }
-    if ($message === '') {
-        $errors[] = 'Message is required.';
-    }
+        if ($name === '' || mb_strlen($name) > 100) {
+            $errors[] = 'Name is required (max 100 characters).';
+        }
+        if ($message === '') {
+            $errors[] = 'Message is required.';
+        }
 
-    if (!$errors) {
-        $stmt = db()->prepare(
-            'INSERT INTO feedback (user_id, name, message) VALUES (:uid, :n, :m)'
-        );
-        $stmt->execute([
-            ':uid' => $_SESSION['user_id'] ?? null,
-            ':n'   => $name,
-            ':m'   => $message,
-        ]);
-        // Post/Redirect/Get avoids duplicate inserts on refresh
-        header('Location: feedback.php?saved=1');
-        exit;
+        if (!$errors) {
+            $stmt = db()->prepare(
+                'INSERT INTO feedback (user_id, name, message) VALUES (:uid, :n, :m)'
+            );
+            $stmt->execute([
+                ':uid' => $_SESSION['user_id'] ?? null,
+                ':n'   => $name,
+                ':m'   => $message,
+            ]);
+            // Post/Redirect/Get avoids duplicate inserts on refresh
+            header('Location: feedback.php?saved=1');
+            exit;
+        }
     }
 }
 
@@ -49,6 +53,7 @@ require __DIR__ . '/layout_header.php';
 <?php endforeach; ?>
 
 <form method="post" class="card card-body shadow-sm mb-4">
+    <?= csrf_field() ?>
     <div class="mb-3">
         <label class="form-label" for="name">Name</label>
         <input class="form-control" id="name" name="name" maxlength="100" required>

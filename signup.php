@@ -8,40 +8,44 @@ $success = false;
 $username = $email = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $username = trim($_POST['username'] ?? '');
-    $email    = trim($_POST['email'] ?? '');
-    $password = $_POST['password'] ?? '';
+    if (!csrf_valid($_POST['csrf_token'] ?? '')) {
+        $errors[] = 'Invalid form submission. Please try again.';
+    } else {
+        $username = trim($_POST['username'] ?? '');
+        $email    = trim($_POST['email'] ?? '');
+        $password = $_POST['password'] ?? '';
 
-    if (!preg_match('/^[A-Za-z0-9_]{3,50}$/', $username)) {
-        $errors[] = 'Username must be 3-50 characters: letters, numbers or underscore.';
-    }
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $errors[] = 'Enter a valid email address.';
-    }
-    if (strlen($password) < 8) {
-        $errors[] = 'Password must be at least 8 characters.';
-    }
+        if (!preg_match('/^[A-Za-z0-9_]{3,50}$/', $username)) {
+            $errors[] = 'Username must be 3-50 characters: letters, numbers or underscore.';
+        }
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errors[] = 'Enter a valid email address.';
+        }
+        if (strlen($password) < 8) {
+            $errors[] = 'Password must be at least 8 characters.';
+        }
 
-    if (!$errors) {
-        try {
-            $stmt = db()->prepare(
-                'INSERT INTO users (username, email, password_hash) VALUES (:u, :e, :h)'
-            );
-            $stmt->execute([
-                ':u' => $username,
-                ':e' => $email,
-                ':h' => password_hash($password, PASSWORD_DEFAULT),
-            ]);
-            $success = true;
-            $username = $email = '';
-        } catch (PDOException $ex) {
-            // 23000 = integrity constraint violation (duplicate username/email)
-            if ($ex->getCode() !== '23000') {
-                error_log('signup insert failed: ' . $ex->getMessage());
+        if (!$errors) {
+            try {
+                $stmt = db()->prepare(
+                    'INSERT INTO users (username, email, password_hash) VALUES (:u, :e, :h)'
+                );
+                $stmt->execute([
+                    ':u' => $username,
+                    ':e' => $email,
+                    ':h' => password_hash($password, PASSWORD_DEFAULT),
+                ]);
+                $success = true;
+                $username = $email = '';
+            } catch (PDOException $ex) {
+                // 23000 = integrity constraint violation (duplicate username/email)
+                if ($ex->getCode() !== '23000') {
+                    error_log('signup insert failed: ' . $ex->getMessage());
+                }
+                $errors[] = $ex->getCode() === '23000'
+                    ? 'That username or email is already registered.'
+                    : 'Could not create account. Please try again later.';
             }
-            $errors[] = $ex->getCode() === '23000'
-                ? 'That username or email is already registered.'
-                : 'Could not create account. Please try again later.';
         }
     }
 }
@@ -59,6 +63,7 @@ require __DIR__ . '/layout_header.php';
 <?php endforeach; ?>
 
 <form method="post" class="card card-body shadow-sm">
+    <?= csrf_field() ?>
     <div class="mb-3">
         <label class="form-label" for="username">Username</label>
         <input class="form-control" id="username" name="username" value="<?= e($username) ?>" required>

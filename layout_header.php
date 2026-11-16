@@ -21,7 +21,10 @@ $loggedIn = !empty($_SESSION['user_id']);
             <?php if ($loggedIn): ?>
                 <a class="nav-link" href="dashboard.php">Dashboard</a>
                 <a class="nav-link" href="feedback.php">Feedback</a>
-                <a class="nav-link" href="logout.php">Logout</a>
+                <form class="d-inline" method="post" action="logout.php">
+                    <?= csrf_field() ?>
+                    <button class="nav-link" type="submit">Logout</button>
+                </form>
             <?php else: ?>
                 <a class="nav-link" href="login.php">Login</a>
                 <a class="nav-link" href="signup.php">Sign up</a>
