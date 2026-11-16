@@ -45,10 +45,13 @@ function csrf_field(): string
     return sprintf('<input type="hidden" name="csrf_token" value="%s">', e(csrf_token()));
 }
 
-function csrf_valid(?string $token): bool
+function csrf_valid($token): bool
 {
     start_session();
     $expected = $_SESSION['csrf_token'] ?? '';
+    if (!is_string($token)) {
+        return false;
+    }
     return $token !== '' && $expected !== '' && hash_equals($expected, $token);
 }
 
