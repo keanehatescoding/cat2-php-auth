@@ -1,7 +1,16 @@
 <?php
 require_once __DIR__ . '/config.php';
 start_session();
-$_SESSION = [];
-session_destroy();
+
+// Logout is state-changing, so it must be a CSRF-protected POST. A GET link
+// could be triggered cross-site (e.g. an  tag) and log a user out.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_valid($_POST['csrf_token'] ?? '')) {
+    $_SESSION = [];
+    session_destroy();
+    if (isset($_COOKIE[session_name()])) {
+        setcookie(session_name(), '', time() - 3600, '/');
+    }
+}
+
 header('Location: login.php');
 exit;

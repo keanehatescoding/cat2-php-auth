@@ -6,24 +6,28 @@ $pageTitle = 'Login';
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $login    = trim($_POST['login'] ?? '');   // username or email
-    $password = $_POST['password'] ?? '';
+    if (!csrf_valid($_POST['csrf_token'] ?? '')) {
+        $error = 'Invalid form submission. Please try again.';
+    } else {
+        $login    = trim($_POST['login'] ?? '');   // username or email
+        $password = $_POST['password'] ?? '';
 
-    $stmt = db()->prepare(
-        'SELECT id, username, password_hash FROM users WHERE username = :name OR email = :email LIMIT 1'
-    );
-    // Native prepares need a distinct placeholder for each occurrence
-    $stmt->execute([':name' => $login, ':email' => $login]);
-    $user = $stmt->fetch();
+        $stmt = db()->prepare(
+            'SELECT id, username, password_hash FROM users WHERE username = :name OR email = :email LIMIT 1'
+        );
+        // Native prepares need a distinct placeholder for each occurrence
+        $stmt->execute([':name' => $login, ':email' => $login]);
+        $user = $stmt->fetch();
 
-    if ($user && password_verify($password, $user['password_hash'])) {
-        session_regenerate_id(true);
-        $_SESSION['user_id']  = $user['id'];
-        $_SESSION['username'] = $user['username'];
-        header('Location: dashboard.php');
-        exit;
+        if ($user && password_verify($password, $user['password_hash'])) {
+            session_regenerate_id(true);
+            $_SESSION['user_id']  = $user['id'];
+            $_SESSION['username'] = $user['username'];
+            header('Location: dashboard.php');
+            exit;
+        }
+        $error = 'Invalid username/email or password.';
     }
-    $error = 'Invalid username/email or password.';
 }
 
 require __DIR__ . '/layout_header.php';
@@ -35,6 +39,7 @@ require __DIR__ . '/layout_header.php';
 <?php endif; ?>
 
 <form method="post" class="card card-body shadow-sm">
+    <?= csrf_field() ?>
     <div class="mb-3">
         <label class="form-label" for="login">Username or email</label>
         <input class="form-control" id="login" name="login" required>
