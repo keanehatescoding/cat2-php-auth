@@ -20,28 +20,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = 'Message is required.';
         }
 
-        if (!$errors) {
-            $stmt = db()->prepare(
-                'INSERT INTO feedback (user_id, name, message) VALUES (:uid, :n, :m)'
-            );
-            $stmt->execute([
-                ':uid' => $_SESSION['user_id'] ?? null,
-                ':n'   => $name,
-                ':m'   => $message,
-            ]);
-            $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
-            log_activity('feedback_submitted', 'feedback saved for ' . $name, $uid);
-            // Post/Redirect/Get avoids duplicate inserts on refresh
-            header('Location: feedback.php?saved=1');
-            exit;
+        $pdo = db();
+        $formLock = acquire_form_ip_lock($pdo);
+        try {
+            if (recent_event_count('feedback_submitted', 10, null, true) >= 5) {
+                $errors[] = 'Too many feedback submissions from this network. Please try again later.';
+                $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+                log_activity('feedback_throttled', 'feedback submission throttled', $uid);
+            } elseif (!$errors) {
+                try {
+                    $stmt = $pdo->prepare(
+                        'INSERT INTO feedback (user_id, name, message) VALUES (:uid, :n, :m)'
+                    );
+                    $stmt->execute([
+                        ':uid' => $_SESSION['user_id'] ?? null,
+                        ':n'   => $name,
+                        ':m'   => $message,
+                    ]);
+                    $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+                    log_activity('feedback_submitted', 'feedback saved for ' . $name, $uid);
+                    // Post/Redirect/Get avoids duplicate inserts on refresh
+                    header('Location: feedback.php?saved=1');
+                    exit;
+                } catch (Throwable $e) {
+                    error_log('feedback insert failed: ' . $e->getMessage());
+                    $errors[] = 'Could not save feedback right now. Please try again later.';
+                }
+            }
+        } finally {
+            release_form_ip_lock($pdo, $formLock);
         }
     }
 }
 
 $saved = isset($_GET['saved']);
-$rows  = db()->query(
-    'SELECT id, name, message, created_at FROM feedback ORDER BY id DESC LIMIT 50'
-)->fetchAll();
+try {
+    $rows = db()->query(
+        'SELECT id, name, message, created_at FROM feedback ORDER BY id DESC LIMIT 50'
+    )->fetchAll();
+} catch (Throwable $e) {
+    error_log('feedback list failed: ' . $e->getMessage());
+    $rows = [];
+    $errors[] = 'Could not load feedback right now. Please try again later.';
+}
 
 require __DIR__ . '/layout_header.php';
 ?>

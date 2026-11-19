@@ -43,7 +43,8 @@ function ensure_security_tables(PDO $pdo): void
                 succeeded   TINYINT(1)   NOT NULL DEFAULT 0,
                 created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_login_attempts_lookup (username, created_at),
-                INDEX idx_login_attempts_ip (ip_address, created_at)
+                INDEX idx_login_attempts_ip (ip_address, created_at),
+                INDEX idx_login_attempts_created (created_at)
             ) ENGINE=InnoDB'
         );
         $pdo->exec(
@@ -56,9 +57,12 @@ function ensure_security_tables(PDO $pdo): void
                 created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_activity_log_user (user_id, created_at),
                 INDEX idx_activity_log_event (event_type, created_at),
+                INDEX idx_activity_log_created (created_at),
                 CONSTRAINT fk_activity_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
             ) ENGINE=InnoDB'
         );
+        try { $pdo->exec('CREATE INDEX idx_login_attempts_created ON login_attempts (created_at)'); } catch (Throwable $e) { /* index may already exist */ }
+        try { $pdo->exec('CREATE INDEX idx_activity_log_created ON activity_log (created_at)'); } catch (Throwable $e) { /* index may already exist */ }
     } catch (Throwable $e) {
         // Degrade gracefully if the app DB user cannot create tables.
         error_log('ensure_security_tables failed: ' . $e->getMessage());
@@ -96,22 +100,50 @@ function csrf_valid($token): bool
     return $token !== '' && $expected !== '' && hash_equals($expected, $token);
 }
 
+function is_https_request(): bool
+{
+    return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['SERVER_PORT'] ?? '') == 443)
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+}
+
+function session_cookie_options(): array
+{
+    return [
+        'lifetime' => 0,
+        'path'     => '/',
+        'domain'   => '',
+        'secure'   => is_https_request(),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ];
+}
+
+function send_security_headers(): void
+{
+    static $sent = false;
+    if ($sent || headers_sent()) {
+        return;
+    }
+    $sent = true;
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: SAMEORIGIN');
+    header('Referrer-Policy: strict-origin-when-cross-origin');
+    header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+    // Keep CSP compatible with existing Bootstrap CDN assets and inline UI scripts.
+    header("Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self'");
+    if (is_https_request()) {
+        header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+    }
+}
+
 function start_session(): void
 {
     if (session_status() === PHP_SESSION_NONE) {
-        $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-            || (($_SERVER['SERVER_PORT'] ?? '') == 443)
-            || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
-        session_set_cookie_params([
-            'lifetime' => 0,
-            'path'     => '/',
-            'domain'   => '',
-            'secure'   => $secure,
-            'httponly' => true,
-            'samesite' => 'Lax',
-        ]);
+        session_set_cookie_params(session_cookie_options());
         session_start();
     }
+    send_security_headers();
 }
 
 function require_login(): void
@@ -129,10 +161,30 @@ function client_ip(): string
     return is_string($ip) && $ip !== '' ? substr($ip, 0, 45) : '0.0.0.0';
 }
 
+function maybe_prune_security_records(PDO $pdo): void
+{
+    static $checked = false;
+    if ($checked) {
+        return;
+    }
+    $checked = true;
+    // Opportunistic cleanup to keep security tables bounded.
+    if (random_int(1, 100) > 2) {
+        return;
+    }
+    try {
+        $pdo->exec("DELETE FROM login_attempts WHERE created_at < (NOW() - INTERVAL 30 DAY)");
+        $pdo->exec("DELETE FROM activity_log WHERE created_at < (NOW() - INTERVAL 90 DAY)");
+    } catch (Throwable $e) {
+        error_log('security record prune failed: ' . $e->getMessage());
+    }
+}
+
 function log_activity(string $eventType, ?string $details = null, ?int $userId = null): void
 {
     try {
-        $stmt = db()->prepare(
+        $pdo = db();
+        $stmt = $pdo->prepare(
             'INSERT INTO activity_log (user_id, event_type, details, ip_address) VALUES (:uid, :evt, :det, :ip)'
         );
         $stmt->execute([
@@ -141,10 +193,76 @@ function log_activity(string $eventType, ?string $details = null, ?int $userId =
             ':det' => $details === null ? null : substr($details, 0, 255),
             ':ip'  => client_ip(),
         ]);
+        maybe_prune_security_records($pdo);
     } catch (Throwable $e) {
         // Logging must not break user flows.
         error_log('activity log failed: ' . $e->getMessage());
     }
+}
+
+function recent_event_count(string $eventType, int $minutes, ?int $userId = null, bool $ipOnly = false): int
+{
+    $minutes = max(0, (int)$minutes);
+    try {
+        $pdo = db();
+        if ($ipOnly || $userId === null) {
+            $stmt = $pdo->prepare(
+                'SELECT COUNT(*) AS n FROM activity_log
+                 WHERE event_type = :evt AND ip_address = :ip
+                   AND created_at >= (NOW() - INTERVAL ' . $minutes . ' MINUTE)'
+            );
+            $stmt->bindValue(':evt', $eventType);
+            $stmt->bindValue(':ip', client_ip());
+        } else {
+            $stmt = $pdo->prepare(
+                'SELECT COUNT(*) AS n FROM activity_log
+                 WHERE event_type = :evt AND user_id = :uid
+                   AND created_at >= (NOW() - INTERVAL ' . $minutes . ' MINUTE)'
+            );
+            $stmt->bindValue(':evt', $eventType);
+            $stmt->bindValue(':uid', $userId, PDO::PARAM_INT);
+        }
+        $stmt->execute();
+        return (int)($stmt->fetch()['n'] ?? 0);
+    } catch (Throwable $e) {
+        error_log('recent_event_count failed: ' . $e->getMessage());
+        return 0;
+    }
+}
+
+function acquire_form_ip_lock(PDO $pdo, ?string $ip = null): ?string
+{
+    $ip = $ip ?? client_ip();
+    $name = 'form_ip_' . hash('sha256', $ip);
+    try {
+        $stmt = $pdo->prepare('SELECT GET_LOCK(:name, 10) AS got');
+        $stmt->execute([':name' => $name]);
+        $got = $stmt->fetch()['got'] ?? 0;
+        if ((int)$got === 1) {
+            return $name;
+        }
+    } catch (Throwable $e) {
+        error_log('acquire_form_ip_lock failed: ' . $e->getMessage());
+    }
+    return null;
+}
+
+function release_form_ip_lock(PDO $pdo, ?string $name): void
+{
+    if ($name === null) {
+        return;
+    }
+    try {
+        $stmt = $pdo->prepare('SELECT RELEASE_LOCK(:name)');
+        $stmt->execute([':name' => $name]);
+    } catch (Throwable $e) {
+        error_log('release_form_ip_lock failed: ' . $e->getMessage());
+    }
+}
+
+function normalize_email(string $email): string
+{
+    return strtolower(trim($email));
 }
 
 function acquire_login_locks(PDO $pdo, string $username, string $ip): array
@@ -197,12 +315,12 @@ function begin_login_attempt(string $username): array
     try {
         $locks = acquire_login_locks($pdo, $username, $ip);
 
+        $windowMinutes = (int)$windowMinutes;
         $countStmt = $pdo->prepare(
             'SELECT COUNT(*) AS n FROM login_attempts
-             WHERE succeeded = 0 AND created_at >= (NOW() - INTERVAL :mins MINUTE)
+             WHERE succeeded = 0 AND created_at >= (NOW() - INTERVAL ' . $windowMinutes . ' MINUTE)
                AND (username = :u OR ip_address = :ip)'
         );
-        $countStmt->bindValue(':mins', $windowMinutes, PDO::PARAM_INT);
         $countStmt->bindValue(':u', $username);
         $countStmt->bindValue(':ip', $ip);
         $countStmt->execute();

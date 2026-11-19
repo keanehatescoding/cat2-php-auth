@@ -12,7 +12,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = 'Invalid form submission. Please try again.';
     } else {
         $username = trim($_POST['username'] ?? '');
-        $email    = trim($_POST['email'] ?? '');
+        $email    = normalize_email($_POST['email'] ?? '');
         $password = $_POST['password'] ?? '';
 
         if (!preg_match('/^[A-Za-z0-9_]{3,50}$/', $username)) {
@@ -25,6 +25,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = 'Password must be at least 8 characters.';
         } elseif (!preg_match('/[A-Za-z]/', $password) || !preg_match('/\d/', $password)) {
             $errors[] = 'Password must include at least one letter and one number.';
+        }
+
+        $pdo = db();
+        $formLock = acquire_form_ip_lock($pdo);
+        try {
+            if (recent_event_count('signup_attempt', 60, null, true) >= 5 || recent_event_count('signup_throttled', 60, null, true) >= 10) {
+                $errors[] = 'Too many signup attempts from this network. Please try again later.';
+                log_activity('signup_throttled', 'signup throttled');
+            } elseif (!$errors) {
+                // Count admitted attempts before hashing/insertion so duplicates also consume quota.
+                log_activity('signup_attempt', 'signup attempt for ' . $username);
+            }
+        } finally {
+            release_form_ip_lock($pdo, $formLock);
         }
 
         if (!$errors) {
