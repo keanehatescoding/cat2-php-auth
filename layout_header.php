@@ -21,6 +21,7 @@ $loggedIn = !empty($_SESSION['user_id']);
             <?php if ($loggedIn): ?>
                 <a class="nav-link" href="dashboard.php">Dashboard</a>
                 <a class="nav-link" href="feedback.php">Feedback</a>
+                <a class="nav-link" href="serverless_demo.php">Serverless</a>
                 <form class="d-inline" method="post" action="logout.php">
                     <?= csrf_field() ?>
                     <button class="nav-link" type="submit">Logout</button>
