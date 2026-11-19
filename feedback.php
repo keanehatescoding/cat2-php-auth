@@ -9,11 +9,15 @@ $name = '';
 $message = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $name    = trim((string)($_POST['name'] ?? ''));
+    $message = trim((string)($_POST['message'] ?? ''));
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Invalid form submission. Please try again.';
+    } elseif (trim((string)($_POST['website'] ?? '')) !== '') {
+        $errors[] = 'Invalid form submission. Please try again.';
+        $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+        log_activity('feedback_honeypot', 'honeypot triggered', $uid);
     } else {
-        $name    = trim($_POST['name'] ?? '');
-        $message = trim($_POST['message'] ?? '');
 
         if ($name === '' || mb_strlen($name) > 100) {
             $errors[] = 'Name is required (max 100 characters).';
@@ -79,6 +83,10 @@ require __DIR__ . '/layout_header.php';
 
 <form method="post" class="card card-body shadow-sm mb-4">
     <?= csrf_field() ?>
+    <div class="d-none" aria-hidden="true">
+        <label for="website">Website</label>
+        <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+    </div>
     <div class="mb-3">
         <label class="form-label" for="name">Name</label>
         <input class="form-control" id="name" name="name" maxlength="100" value="<?= e($name) ?>" required>

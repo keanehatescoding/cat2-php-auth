@@ -18,15 +18,18 @@ $challengeRequired = login_challenge_required($initialLogin !== '' ? $initialLog
 $challengePair = $challengeRequired ? ensure_login_challenge() : [null, null];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $login    = trim((string)($_POST['login'] ?? ''));   // username or email
+    $password = (string)($_POST['password'] ?? '');
+    $postedNext = $_POST['next'] ?? $next;
+    $next = is_string($postedNext) ? $postedNext : '';
+    $throttleKey = $login !== '' ? $login : client_ip();
+
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $error = 'Invalid form submission. Please try again.';
+    } elseif (trim((string)($_POST['website'] ?? '')) !== '') {
+        $error = 'Invalid username/email or password.';
+        log_activity('login_honeypot', 'honeypot triggered for ' . $login);
     } else {
-        $login    = trim($_POST['login'] ?? '');   // username or email
-        $password = $_POST['password'] ?? '';
-        $postedNext = $_POST['next'] ?? $next;
-        $next = is_string($postedNext) ? $postedNext : '';
-
-        $throttleKey = $login !== '' ? $login : client_ip();
         $challengeRequired = login_challenge_required($throttleKey);
         if ($challengeRequired && ($challengePair[0] === null || $challengePair[1] === null)) {
             $challengePair = ensure_login_challenge();
@@ -120,6 +123,10 @@ require __DIR__ . '/layout_header.php';
     <?php if (is_safe_redirect_target($next)): ?>
         <input type="hidden" name="next" value="<?= e($next) ?>">
     <?php endif; ?>
+    <div class="d-none" aria-hidden="true">
+        <label for="website">Website</label>
+        <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+    </div>
     <div class="mb-3">
         <label class="form-label" for="login">Username or email</label>
         <input class="form-control" id="login" name="login" value="<?= e($loginValue) ?>" required autocomplete="username">
