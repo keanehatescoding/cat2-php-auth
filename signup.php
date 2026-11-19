@@ -11,9 +11,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Invalid form submission. Please try again.';
     } else {
-        $username = trim($_POST['username'] ?? '');
-        $email    = normalize_email($_POST['email'] ?? '');
+        $rawUsername = $_POST['username'] ?? '';
+        $username = is_string($rawUsername) ? trim($rawUsername) : '';
+        $rawEmail = $_POST['email'] ?? '';
+        $email = is_string($rawEmail) ? normalize_email($rawEmail) : '';
         $password = $_POST['password'] ?? '';
+        if (!is_string($password)) {
+            $password = '';
+        }
 
         if (!preg_match('/^[A-Za-z0-9_]{3,50}$/', $username)) {
             $errors[] = 'Username must be 3-50 characters: letters, numbers or underscore.';

@@ -2,13 +2,25 @@
 // Feedback handler for AWS Lambda. Runs once per request; there is no server to manage.
 // Receives the API event from a Lambda function URL and returns an HTTP-style response.
 
-function handle(array $event): array
+function handle(mixed $event): array
 {
     $json = ['content-type' => 'application/json'];
 
-    $body = (string) ($event['body'] ?? '');
-    if (!empty($event['isBase64Encoded'])) {
-        $body = base64_decode($body);
+    if (!is_array($event)) {
+        return [
+            'statusCode' => 400,
+            'headers' => $json,
+            'body' => json_encode(['error' => 'event must be an object']),
+        ];
+    }
+
+    $rawBody = $event['body'] ?? '';
+    $body = is_string($rawBody) ? $rawBody : '';
+    if (!empty($event['isBase64Encoded']) && is_string($rawBody)) {
+        $decoded = base64_decode($rawBody, true);
+        if ($decoded !== false) {
+            $body = $decoded;
+        }
     }
 
     // The feedback form posts application/x-www-form-urlencoded data.
