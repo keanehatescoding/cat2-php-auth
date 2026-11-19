@@ -4,6 +4,7 @@ start_session();
 
 $pageTitle = 'Login';
 $error = '';
+$next = $_GET['next'] ?? ($_POST['next'] ?? '');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
@@ -11,6 +12,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $login    = trim($_POST['login'] ?? '');   // username or email
         $password = $_POST['password'] ?? '';
+        $next     = $_POST['next'] ?? $next;
 
         $reservation = begin_login_attempt($login !== '' ? $login : client_ip());
         [$allowed, , $windowMinutes] = $reservation;
@@ -36,7 +38,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['username'] = $user['username'];
                 $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
                 log_activity('login_success', 'user logged in', (int)$user['id']);
-                header('Location: dashboard.php');
+                $destination = is_safe_redirect_target($next) ? $next : 'dashboard.php';
+                header('Location: ' . $destination);
                 exit;
             }
 
@@ -57,6 +60,9 @@ require __DIR__ . '/layout_header.php';
 
 <form method="post" class="card card-body shadow-sm">
     <?= csrf_field() ?>
+    <?php if (is_safe_redirect_target($next)): ?>
+        <input type="hidden" name="next" value="<?= e($next) ?>">
+    <?php endif; ?>
     <div class="mb-3">
         <label class="form-label" for="login">Username or email</label>
         <input class="form-control" id="login" name="login" required autocomplete="username">

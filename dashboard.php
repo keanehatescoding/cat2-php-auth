@@ -7,6 +7,7 @@ $userId = (int)$_SESSION['user_id'];
 
 $recentActivity = [];
 $recentFailures = 0;
+$lastLogin = null;
 try {
     $stmt = db()->prepare(
         'SELECT event_type, details, ip_address, created_at
@@ -17,6 +18,19 @@ try {
     );
     $stmt->execute([':uid' => $userId]);
     $recentActivity = $stmt->fetchAll();
+
+    $stmt = db()->prepare(
+        'SELECT ip_address, created_at
+         FROM activity_log
+         WHERE user_id = :uid AND event_type = :evt
+         ORDER BY id DESC
+         LIMIT 2'
+    );
+    $stmt->execute([':uid' => $userId, ':evt' => 'login_success']);
+    $logins = $stmt->fetchAll();
+    if (count($logins) >= 2) {
+        $lastLogin = $logins[1];
+    }
 
     $userStmt = db()->prepare('SELECT username, email FROM users WHERE id = :id LIMIT 1');
     $userStmt->execute([':id' => $userId]);
@@ -51,7 +65,15 @@ try {
 require __DIR__ . '/layout_header.php';
 ?>
 <h1 class="h3">Welcome, <?= e($_SESSION['username']) ?></h1>
-<p class="text-muted">You are logged in. Server time: <?= e(date('Y-m-d H:i:s')) ?>, host: <?= e(gethostname() ?: 'unknown') ?>.</p>
+<p class="text-muted mb-1">You are logged in. Server time: <?= e(date('Y-m-d H:i:s')) ?>, host: <?= e(gethostname() ?: 'unknown') ?>.</p>
+<p class="text-muted">
+    Last successful login:
+    <?php if ($lastLogin): ?>
+        <strong><?= e($lastLogin['created_at']) ?></strong> from <code><?= e($lastLogin['ip_address'] ?? 'unknown') ?></code>
+    <?php else: ?>
+        <span>This is your first recorded successful login.</span>
+    <?php endif; ?>
+</p>
 
 <div class="row g-3 mb-4">
     <div class="col-md-6">
