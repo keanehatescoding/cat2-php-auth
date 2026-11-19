@@ -43,7 +43,8 @@ function ensure_security_tables(PDO $pdo): void
                 succeeded   TINYINT(1)   NOT NULL DEFAULT 0,
                 created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_login_attempts_lookup (username, created_at),
-                INDEX idx_login_attempts_ip (ip_address, created_at)
+                INDEX idx_login_attempts_ip (ip_address, created_at),
+                INDEX idx_login_attempts_created (created_at)
             ) ENGINE=InnoDB'
         );
         $pdo->exec(
@@ -56,9 +57,12 @@ function ensure_security_tables(PDO $pdo): void
                 created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_activity_log_user (user_id, created_at),
                 INDEX idx_activity_log_event (event_type, created_at),
+                INDEX idx_activity_log_created (created_at),
                 CONSTRAINT fk_activity_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
             ) ENGINE=InnoDB'
         );
+        try { $pdo->exec('CREATE INDEX idx_login_attempts_created ON login_attempts (created_at)'); } catch (Throwable $e) { /* index may already exist */ }
+        try { $pdo->exec('CREATE INDEX idx_activity_log_created ON activity_log (created_at)'); } catch (Throwable $e) { /* index may already exist */ }
     } catch (Throwable $e) {
         // Degrade gracefully if the app DB user cannot create tables.
         error_log('ensure_security_tables failed: ' . $e->getMessage());
@@ -200,8 +204,9 @@ function recent_event_count(string $eventType, int $minutes, ?int $userId = null
 {
     $minutes = max(0, (int)$minutes);
     try {
+        $pdo = db();
         if ($ipOnly || $userId === null) {
-            $stmt = db()->prepare(
+            $stmt = $pdo->prepare(
                 'SELECT COUNT(*) AS n FROM activity_log
                  WHERE event_type = :evt AND ip_address = :ip
                    AND created_at >= (NOW() - INTERVAL ' . $minutes . ' MINUTE)'
@@ -209,7 +214,7 @@ function recent_event_count(string $eventType, int $minutes, ?int $userId = null
             $stmt->bindValue(':evt', $eventType);
             $stmt->bindValue(':ip', client_ip());
         } else {
-            $stmt = db()->prepare(
+            $stmt = $pdo->prepare(
                 'SELECT COUNT(*) AS n FROM activity_log
                  WHERE event_type = :evt AND user_id = :uid
                    AND created_at >= (NOW() - INTERVAL ' . $minutes . ' MINUTE)'
@@ -222,6 +227,36 @@ function recent_event_count(string $eventType, int $minutes, ?int $userId = null
     } catch (Throwable $e) {
         error_log('recent_event_count failed: ' . $e->getMessage());
         return 0;
+    }
+}
+
+function acquire_form_ip_lock(PDO $pdo, ?string $ip = null): ?string
+{
+    $ip = $ip ?? client_ip();
+    $name = 'form_ip_' . hash('sha256', $ip);
+    try {
+        $stmt = $pdo->prepare('SELECT GET_LOCK(:name, 10) AS got');
+        $stmt->execute([':name' => $name]);
+        $got = $stmt->fetch()['got'] ?? 0;
+        if ((int)$got === 1) {
+            return $name;
+        }
+    } catch (Throwable $e) {
+        error_log('acquire_form_ip_lock failed: ' . $e->getMessage());
+    }
+    return null;
+}
+
+function release_form_ip_lock(PDO $pdo, ?string $name): void
+{
+    if ($name === null) {
+        return;
+    }
+    try {
+        $stmt = $pdo->prepare('SELECT RELEASE_LOCK(:name)');
+        $stmt->execute([':name' => $name]);
+    } catch (Throwable $e) {
+        error_log('release_form_ip_lock failed: ' . $e->getMessage());
     }
 }
 

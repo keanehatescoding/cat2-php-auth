@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $stmt = db()->prepare(
                 'SELECT id, username, password_hash FROM users
-                 WHERE username = :name OR LOWER(email) = LOWER(:email)
+                 WHERE username = :name OR email = :email
                  LIMIT 1'
             );
             // Native prepares need a distinct placeholder for each occurrence

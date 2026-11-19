@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS login_attempts (
     succeeded   TINYINT(1)   NOT NULL DEFAULT 0,
     created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_login_attempts_lookup (username, created_at),
-    INDEX idx_login_attempts_ip (ip_address, created_at)
+    INDEX idx_login_attempts_ip (ip_address, created_at),
+    INDEX idx_login_attempts_created (created_at)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS activity_log (
@@ -41,5 +42,6 @@ CREATE TABLE IF NOT EXISTS activity_log (
     created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_activity_log_user (user_id, created_at),
     INDEX idx_activity_log_event (event_type, created_at),
+    INDEX idx_activity_log_created (created_at),
     CONSTRAINT fk_activity_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
