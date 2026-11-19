@@ -4,7 +4,8 @@ start_session();
 
 $pageTitle = 'Login';
 $error = '';
-$next = $_GET['next'] ?? ($_POST['next'] ?? '');
+$rawNext = $_GET['next'] ?? ($_POST['next'] ?? '');
+$next = is_string($rawNext) ? $rawNext : '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
@@ -12,7 +13,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $login    = trim($_POST['login'] ?? '');   // username or email
         $password = $_POST['password'] ?? '';
-        $next     = $_POST['next'] ?? $next;
+        $postedNext = $_POST['next'] ?? $next;
+        $next = is_string($postedNext) ? $postedNext : '';
 
         $reservation = begin_login_attempt($login !== '' ? $login : client_ip());
         [$allowed, , $windowMinutes] = $reservation;
@@ -32,11 +34,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($user && password_verify($password, $user['password_hash'])) {
                 complete_login_attempt($reservation, true);
+                $previousLogin = null;
+                $previousLoginKnown = false;
+                try {
+                    $prevStmt = db()->prepare(
+                        'SELECT ip_address, created_at
+                         FROM activity_log
+                         WHERE user_id = :uid AND event_type = :evt
+                         ORDER BY id DESC
+                         LIMIT 1'
+                    );
+                    $prevStmt->execute([':uid' => (int)$user['id'], ':evt' => 'login_success']);
+                    $previousLogin = $prevStmt->fetch() ?: null;
+                    $previousLoginKnown = true;
+                } catch (Throwable $e) {
+                    error_log('previous login lookup failed: ' . $e->getMessage());
+                }
+
                 session_regenerate_id(true);
                 $_SESSION = [];
                 $_SESSION['user_id']  = $user['id'];
                 $_SESSION['username'] = $user['username'];
                 $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+                $_SESSION['previous_login'] = $previousLogin;
+                $_SESSION['previous_login_known'] = $previousLoginKnown;
                 log_activity('login_success', 'user logged in', (int)$user['id']);
                 $destination = is_safe_redirect_target($next) ? $next : 'dashboard.php';
                 header('Location: ' . $destination);

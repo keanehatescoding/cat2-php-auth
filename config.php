@@ -152,7 +152,12 @@ function is_safe_redirect_target(?string $target): bool
         return false;
     }
     // Allow only same-origin relative paths within the app.
-    if ($target[0] !== '/' || str_starts_with($target, '//') || str_contains($target, "\n") || str_contains($target, "\r")) {
+    if (
+        $target[0] !== '/'
+        || str_starts_with($target, '//')
+        || str_contains($target, '\\')
+        || preg_match('/[\x00-\x1F\x7F]/', $target)
+    ) {
         return false;
     }
     $parts = parse_url($target);
