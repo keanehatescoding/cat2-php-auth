@@ -13,10 +13,9 @@ if (!empty($_SESSION['user_id'])) {
     exit;
 }
 
-$challengeLookup = $login ?? (($_POST['login'] ?? '') !== '' ? trim((string)$_POST['login']) : '');
-$challengeRequired = login_challenge_required($challengeLookup !== '' ? $challengeLookup : client_ip());
+$initialLogin = isset($_POST['login']) && is_string($_POST['login']) ? trim($_POST['login']) : '';
+$challengeRequired = login_challenge_required($initialLogin !== '' ? $initialLogin : client_ip());
 $challengePair = $challengeRequired ? ensure_login_challenge() : [null, null];
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $error = 'Invalid form submission. Please try again.';

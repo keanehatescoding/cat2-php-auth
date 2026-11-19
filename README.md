@@ -55,3 +55,9 @@ Complete certificate issuance/installation for your domain according to your cer
 
 ### Alternative: Docker Compose
 The included `docker-compose.yml` is a supported containerized deployment path. It provisions the MariaDB database/user/password from environment variables and initializes tables from `sql/schema.sql`. Set `CAT2_DB_PASS` and `MARIADB_ROOT_PASSWORD` (e.g. in `.env`) before starting the stack. For public deployments, place the service behind TLS/HTTPS before users access it.
+
+## Operations
+- **Health check:** `health.php` returns minimal JSON status. If `CAT2_HEALTH_TOKEN` is set in the web server environment, requests must include `Authorization: Bearer <token>` or `?token=<token>`; otherwise the endpoint responds with `403`.
+- **Database backups:** run regular `mariadb-dump` backups for `CAT2` (e.g. daily cron), store them in a restricted location (e.g. `/var/backups/cat2`, `700`), and apply retention/pruning and restore verification.
+- **Deployments:** keep `/var/www/html/cat2` (or your deploy path) in sync with the `main` branch, run `php -l` on changed PHP files, and reload/restart web services only when configuration changes require it.
+- **CI:** a PHP lint workflow is recommended for push/PR validation (`php -l` across tracked `*.php` files). If your Git push credentials lack the `workflow` scope, add/update `.github/workflows` using credentials that include it.
