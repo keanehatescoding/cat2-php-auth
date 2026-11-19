@@ -291,6 +291,70 @@ function normalize_email(string $email): string
     return strtolower(trim($email));
 }
 
+function current_login_failure_count(string $username): int
+{
+    $windowMinutes = 15;
+    $username = substr($username, 0, 100);
+    $ip = client_ip();
+    try {
+        $stmt = db()->prepare(
+            'SELECT COUNT(*) AS n FROM login_attempts
+             WHERE succeeded = 0 AND created_at >= (NOW() - INTERVAL ' . (int)$windowMinutes . ' MINUTE)
+               AND (username = :u OR ip_address = :ip)'
+        );
+        $stmt->execute([':u' => $username, ':ip' => $ip]);
+        return (int)($stmt->fetch()['n'] ?? 0);
+    } catch (Throwable $e) {
+        error_log('current_login_failure_count failed: ' . $e->getMessage());
+        return 0;
+    }
+}
+
+function login_challenge_required(string $username): bool
+{
+    return current_login_failure_count($username) >= 2;
+}
+
+function ensure_login_challenge(): array
+{
+    start_session();
+    $a = random_int(2, 9);
+    $b = random_int(1, 9);
+    if (!isset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b'])) {
+        $_SESSION['login_challenge_a'] = $a;
+        $_SESSION['login_challenge_b'] = $b;
+    }
+    return [(int)$_SESSION['login_challenge_a'], (int)$_SESSION['login_challenge_b']];
+}
+
+function rotate_login_challenge(): array
+{
+    start_session();
+    unset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b']);
+    return ensure_login_challenge();
+}
+
+function login_challenge_valid($answer): bool
+{
+    start_session();
+    if (!isset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b'])) {
+        return false;
+    }
+    $expected = (int)$_SESSION['login_challenge_a'] + (int)$_SESSION['login_challenge_b'];
+    if (!is_string($answer) && !is_int($answer)) {
+        return false;
+    }
+    $answer = trim((string)$answer);
+    if ($answer === '' || !ctype_digit(ltrim($answer, '+'))) {
+        // allow plain digits
+    }
+    $ok = hash_equals((string)$expected, (string)(int)$answer);
+    if ($ok) {
+        unset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b']);
+    }
+    return $ok;
+}
+
 function acquire_login_locks(PDO $pdo, string $username, string $ip): array
 {
     $names = [
