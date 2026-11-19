@@ -147,45 +147,109 @@ function log_activity(string $eventType, ?string $details = null, ?int $userId =
     }
 }
 
-function record_login_attempt(string $username, bool $succeeded): void
+function acquire_login_locks(PDO $pdo, string $username, string $ip): array
 {
-    try {
-        $stmt = db()->prepare(
-            'INSERT INTO login_attempts (username, ip_address, succeeded) VALUES (:u, :ip, :ok)'
-        );
-        $stmt->execute([
-            ':u'  => substr($username, 0, 100),
-            ':ip' => client_ip(),
-            ':ok' => $succeeded ? 1 : 0,
-        ]);
-    } catch (Throwable $e) {
-        error_log('login attempt log failed: ' . $e->getMessage());
+    $names = [
+        'login_u_' . hash('sha256', $username),
+        'login_i_' . hash('sha256', $ip),
+    ];
+    sort($names, SORT_STRING);
+    $names = array_values(array_unique($names));
+    $acquired = [];
+    foreach ($names as $name) {
+        $stmt = $pdo->prepare('SELECT GET_LOCK(:name, 10) AS got');
+        $stmt->execute([':name' => $name]);
+        $got = $stmt->fetch()['got'] ?? 0;
+        if ((int)$got !== 1) {
+            foreach (array_reverse($acquired) as $held) {
+                $release = $pdo->prepare('SELECT RELEASE_LOCK(:name)');
+                $release->execute([':name' => $held]);
+            }
+            throw new RuntimeException('Could not acquire login admission lock');
+        }
+        $acquired[] = $name;
+    }
+    return $acquired;
+}
+
+function release_login_locks(PDO $pdo, array $names): void
+{
+    foreach (array_reverse($names) as $name) {
+        try {
+            $stmt = $pdo->prepare('SELECT RELEASE_LOCK(:name)');
+            $stmt->execute([':name' => $name]);
+        } catch (Throwable $e) {
+            error_log('release login lock failed: ' . $e->getMessage());
+        }
     }
 }
 
-function login_throttled(string $username): array
+function begin_login_attempt(string $username): array
 {
-    // Simple brute-force protection: block after 5 failed attempts in 15 minutes
-    // for the same username or from the same IP.
+    // Reserve admission before password verification so concurrent attempts for the
+    // same username or IP cannot all pass the throttle check in parallel.
     $windowMinutes = 15;
     $maxFailures = 5;
+    $username = substr($username, 0, 100);
+    $ip = client_ip();
+    $pdo = db();
+    $locks = [];
     try {
-        $stmt = db()->prepare(
+        $locks = acquire_login_locks($pdo, $username, $ip);
+
+        $countStmt = $pdo->prepare(
             'SELECT COUNT(*) AS n FROM login_attempts
              WHERE succeeded = 0 AND created_at >= (NOW() - INTERVAL :mins MINUTE)
                AND (username = :u OR ip_address = :ip)'
         );
-        $stmt->bindValue(':mins', $windowMinutes, PDO::PARAM_INT);
-        $stmt->bindValue(':u', substr($username, 0, 100));
-        $stmt->bindValue(':ip', client_ip());
-        $stmt->execute();
-        $n = (int)($stmt->fetch()['n'] ?? 0);
+        $countStmt->bindValue(':mins', $windowMinutes, PDO::PARAM_INT);
+        $countStmt->bindValue(':u', $username);
+        $countStmt->bindValue(':ip', $ip);
+        $countStmt->execute();
+        $n = (int)($countStmt->fetch()['n'] ?? 0);
         if ($n >= $maxFailures) {
-            return [true, $windowMinutes];
+            return [false, null, $windowMinutes, $locks, $pdo];
         }
+
+        $insert = $pdo->prepare(
+            'INSERT INTO login_attempts (username, ip_address, succeeded) VALUES (:u, :ip, 0)'
+        );
+        $insert->execute([':u' => $username, ':ip' => $ip]);
+        $attemptId = (int)$pdo->lastInsertId();
+
+        // Re-check including the reserved in-progress attempt for atomic admission.
+        $countStmt->execute();
+        $nWithReservation = (int)($countStmt->fetch()['n'] ?? 0);
+        if ($nWithReservation > $maxFailures) {
+            $delete = $pdo->prepare('DELETE FROM login_attempts WHERE id = :id');
+            $delete->execute([':id' => $attemptId]);
+            return [false, null, $windowMinutes, $locks, $pdo];
+        }
+
+        return [true, $attemptId, $windowMinutes, $locks, $pdo];
     } catch (Throwable $e) {
         // Fail open for availability, but log for operators.
-        error_log('throttle check failed: ' . $e->getMessage());
+        error_log('begin_login_attempt failed: ' . $e->getMessage());
+        return [true, null, $windowMinutes, $locks, $pdo];
     }
-    return [false, $windowMinutes];
+}
+
+function complete_login_attempt($reservation, bool $succeeded): void
+{
+    [, $attemptId, , $locks, $pdo] = $reservation + [null, null, null, [], null];
+    try {
+        if ($attemptId !== null && $pdo instanceof PDO) {
+            if ($succeeded) {
+                $stmt = $pdo->prepare('UPDATE login_attempts SET succeeded = 1 WHERE id = :id');
+                $stmt->execute([':id' => (int)$attemptId]);
+            }
+            // Failed attempts remain recorded as succeeded = 0.
+        }
+    } catch (Throwable $e) {
+        error_log('complete_login_attempt failed: ' . $e->getMessage());
+    } finally {
+        if ($pdo instanceof PDO && is_array($locks) && $locks) {
+            release_login_locks($pdo, $locks);
+        }
+    }
 }

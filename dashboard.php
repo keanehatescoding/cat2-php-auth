@@ -11,19 +11,38 @@ try {
     $stmt = db()->prepare(
         'SELECT event_type, details, ip_address, created_at
          FROM activity_log
-         WHERE user_id = :uid OR (user_id IS NULL AND event_type IN ("login_failure", "login_blocked"))
+         WHERE user_id = :uid
          ORDER BY id DESC
          LIMIT 10'
     );
     $stmt->execute([':uid' => $userId]);
     $recentActivity = $stmt->fetchAll();
 
-    $stmt = db()->prepare(
-        'SELECT COUNT(*) AS n FROM login_attempts
-         WHERE succeeded = 0 AND created_at >= (NOW() - INTERVAL 15 MINUTE) AND username = :u'
-    );
-    $stmt->execute([':u' => (string)$_SESSION['username']]);
-    $recentFailures = (int)($stmt->fetch()['n'] ?? 0);
+    $userStmt = db()->prepare('SELECT username, email FROM users WHERE id = :id LIMIT 1');
+    $userStmt->execute([':id' => $userId]);
+    $account = $userStmt->fetch() ?: [];
+    $identifiers = array_values(array_unique(array_filter([
+        (string)($_SESSION['username'] ?? ''),
+        (string)($account['username'] ?? ''),
+        (string)($account['email'] ?? ''),
+    ], static fn($v) => $v !== '')));
+
+    if ($identifiers) {
+        $placeholders = [];
+        $params = [];
+        foreach ($identifiers as $i => $identifier) {
+            $key = ':u' . $i;
+            $placeholders[] = $key;
+            $params[$key] = $identifier;
+        }
+        $stmt = db()->prepare(
+            'SELECT COUNT(*) AS n FROM login_attempts
+             WHERE succeeded = 0 AND created_at >= (NOW() - INTERVAL 15 MINUTE)
+               AND username IN (' . implode(', ', $placeholders) . ')'
+        );
+        $stmt->execute($params);
+        $recentFailures = (int)($stmt->fetch()['n'] ?? 0);
+    }
 } catch (Throwable $e) {
     // Dashboard should still render if new tables are unavailable.
     error_log('dashboard activity query failed: ' . $e->getMessage());

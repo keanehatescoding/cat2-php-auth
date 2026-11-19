@@ -12,8 +12,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $login    = trim($_POST['login'] ?? '');   // username or email
         $password = $_POST['password'] ?? '';
 
-        [$blocked, $windowMinutes] = login_throttled($login !== '' ? $login : client_ip());
-        if ($blocked) {
+        $reservation = begin_login_attempt($login !== '' ? $login : client_ip());
+        [$allowed, , $windowMinutes] = $reservation;
+        if (!$allowed) {
+            complete_login_attempt($reservation, false);
             $error = "Too many failed login attempts. Please try again in about {$windowMinutes} minutes.";
             log_activity('login_blocked', 'throttled login attempt for ' . $login);
         } else {
@@ -25,7 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $user = $stmt->fetch();
 
             if ($user && password_verify($password, $user['password_hash'])) {
-                record_login_attempt($login, true);
+                complete_login_attempt($reservation, true);
                 session_regenerate_id(true);
                 $_SESSION['user_id']  = $user['id'];
                 $_SESSION['username'] = $user['username'];
@@ -34,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
 
-            record_login_attempt($login, false);
+            complete_login_attempt($reservation, false);
             log_activity('login_failure', 'failed login for ' . $login);
             $error = 'Invalid username/email or password.';
         }
