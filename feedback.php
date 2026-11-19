@@ -9,6 +9,10 @@ $saved = false;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Invalid form submission. Please try again.';
+    } elseif (recent_event_count('feedback_submitted', 10, null, true) >= 5) {
+        $errors[] = 'Too many feedback submissions from this network. Please try again later.';
+        $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+        log_activity('feedback_throttled', 'feedback submission throttled', $uid);
     } else {
         $name    = trim($_POST['name'] ?? '');
         $message = trim($_POST['message'] ?? '');
@@ -21,19 +25,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if (!$errors) {
-            $stmt = db()->prepare(
-                'INSERT INTO feedback (user_id, name, message) VALUES (:uid, :n, :m)'
-            );
-            $stmt->execute([
-                ':uid' => $_SESSION['user_id'] ?? null,
-                ':n'   => $name,
-                ':m'   => $message,
-            ]);
-            $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
-            log_activity('feedback_submitted', 'feedback saved for ' . $name, $uid);
-            // Post/Redirect/Get avoids duplicate inserts on refresh
-            header('Location: feedback.php?saved=1');
-            exit;
+            try {
+                $stmt = db()->prepare(
+                    'INSERT INTO feedback (user_id, name, message) VALUES (:uid, :n, :m)'
+                );
+                $stmt->execute([
+                    ':uid' => $_SESSION['user_id'] ?? null,
+                    ':n'   => $name,
+                    ':m'   => $message,
+                ]);
+                $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+                log_activity('feedback_submitted', 'feedback saved for ' . $name, $uid);
+                // Post/Redirect/Get avoids duplicate inserts on refresh
+                header('Location: feedback.php?saved=1');
+                exit;
+            } catch (Throwable $e) {
+                error_log('feedback insert failed: ' . $e->getMessage());
+                $errors[] = 'Could not save feedback right now. Please try again later.';
+            }
         }
     }
 }

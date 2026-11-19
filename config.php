@@ -96,22 +96,50 @@ function csrf_valid($token): bool
     return $token !== '' && $expected !== '' && hash_equals($expected, $token);
 }
 
+function is_https_request(): bool
+{
+    return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['SERVER_PORT'] ?? '') == 443)
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+}
+
+function session_cookie_options(): array
+{
+    return [
+        'lifetime' => 0,
+        'path'     => '/',
+        'domain'   => '',
+        'secure'   => is_https_request(),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ];
+}
+
+function send_security_headers(): void
+{
+    static $sent = false;
+    if ($sent || headers_sent()) {
+        return;
+    }
+    $sent = true;
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: SAMEORIGIN');
+    header('Referrer-Policy: strict-origin-when-cross-origin');
+    header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+    // Keep CSP compatible with existing Bootstrap CDN assets and inline UI scripts.
+    header("Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self'");
+    if (is_https_request()) {
+        header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+    }
+}
+
 function start_session(): void
 {
     if (session_status() === PHP_SESSION_NONE) {
-        $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-            || (($_SERVER['SERVER_PORT'] ?? '') == 443)
-            || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
-        session_set_cookie_params([
-            'lifetime' => 0,
-            'path'     => '/',
-            'domain'   => '',
-            'secure'   => $secure,
-            'httponly' => true,
-            'samesite' => 'Lax',
-        ]);
+        session_set_cookie_params(session_cookie_options());
         session_start();
     }
+    send_security_headers();
 }
 
 function require_login(): void
@@ -129,10 +157,30 @@ function client_ip(): string
     return is_string($ip) && $ip !== '' ? substr($ip, 0, 45) : '0.0.0.0';
 }
 
+function maybe_prune_security_records(PDO $pdo): void
+{
+    static $checked = false;
+    if ($checked) {
+        return;
+    }
+    $checked = true;
+    // Opportunistic cleanup to keep security tables bounded.
+    if (random_int(1, 100) > 2) {
+        return;
+    }
+    try {
+        $pdo->exec("DELETE FROM login_attempts WHERE created_at < (NOW() - INTERVAL 30 DAY)");
+        $pdo->exec("DELETE FROM activity_log WHERE created_at < (NOW() - INTERVAL 90 DAY)");
+    } catch (Throwable $e) {
+        error_log('security record prune failed: ' . $e->getMessage());
+    }
+}
+
 function log_activity(string $eventType, ?string $details = null, ?int $userId = null): void
 {
     try {
-        $stmt = db()->prepare(
+        $pdo = db();
+        $stmt = $pdo->prepare(
             'INSERT INTO activity_log (user_id, event_type, details, ip_address) VALUES (:uid, :evt, :det, :ip)'
         );
         $stmt->execute([
@@ -141,10 +189,45 @@ function log_activity(string $eventType, ?string $details = null, ?int $userId =
             ':det' => $details === null ? null : substr($details, 0, 255),
             ':ip'  => client_ip(),
         ]);
+        maybe_prune_security_records($pdo);
     } catch (Throwable $e) {
         // Logging must not break user flows.
         error_log('activity log failed: ' . $e->getMessage());
     }
+}
+
+function recent_event_count(string $eventType, int $minutes, ?int $userId = null, bool $ipOnly = false): int
+{
+    $minutes = max(0, (int)$minutes);
+    try {
+        if ($ipOnly || $userId === null) {
+            $stmt = db()->prepare(
+                'SELECT COUNT(*) AS n FROM activity_log
+                 WHERE event_type = :evt AND ip_address = :ip
+                   AND created_at >= (NOW() - INTERVAL ' . $minutes . ' MINUTE)'
+            );
+            $stmt->bindValue(':evt', $eventType);
+            $stmt->bindValue(':ip', client_ip());
+        } else {
+            $stmt = db()->prepare(
+                'SELECT COUNT(*) AS n FROM activity_log
+                 WHERE event_type = :evt AND user_id = :uid
+                   AND created_at >= (NOW() - INTERVAL ' . $minutes . ' MINUTE)'
+            );
+            $stmt->bindValue(':evt', $eventType);
+            $stmt->bindValue(':uid', $userId, PDO::PARAM_INT);
+        }
+        $stmt->execute();
+        return (int)($stmt->fetch()['n'] ?? 0);
+    } catch (Throwable $e) {
+        error_log('recent_event_count failed: ' . $e->getMessage());
+        return 0;
+    }
+}
+
+function normalize_email(string $email): string
+{
+    return strtolower(trim($email));
 }
 
 function acquire_login_locks(PDO $pdo, string $username, string $ip): array
@@ -197,12 +280,12 @@ function begin_login_attempt(string $username): array
     try {
         $locks = acquire_login_locks($pdo, $username, $ip);
 
+        $windowMinutes = (int)$windowMinutes;
         $countStmt = $pdo->prepare(
             'SELECT COUNT(*) AS n FROM login_attempts
-             WHERE succeeded = 0 AND created_at >= (NOW() - INTERVAL :mins MINUTE)
+             WHERE succeeded = 0 AND created_at >= (NOW() - INTERVAL ' . $windowMinutes . ' MINUTE)
                AND (username = :u OR ip_address = :ip)'
         );
-        $countStmt->bindValue(':mins', $windowMinutes, PDO::PARAM_INT);
         $countStmt->bindValue(':u', $username);
         $countStmt->bindValue(':ip', $ip);
         $countStmt->execute();

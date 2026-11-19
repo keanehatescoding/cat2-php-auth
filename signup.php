@@ -10,9 +10,12 @@ $username = $email = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Invalid form submission. Please try again.';
+    } elseif (recent_event_count('signup', 60, null, true) >= 5 || recent_event_count('signup_throttled', 60, null, true) >= 10) {
+        $errors[] = 'Too many signup attempts from this network. Please try again later.';
+        log_activity('signup_throttled', 'signup throttled');
     } else {
         $username = trim($_POST['username'] ?? '');
-        $email    = trim($_POST['email'] ?? '');
+        $email    = normalize_email($_POST['email'] ?? '');
         $password = $_POST['password'] ?? '';
 
         if (!preg_match('/^[A-Za-z0-9_]{3,50}$/', $username)) {

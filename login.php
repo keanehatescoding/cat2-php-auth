@@ -20,7 +20,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             log_activity('login_blocked', 'throttled login attempt for ' . $login);
         } else {
             $stmt = db()->prepare(
-                'SELECT id, username, password_hash FROM users WHERE username = :name OR email = :email LIMIT 1'
+                'SELECT id, username, password_hash FROM users
+                 WHERE username = :name OR LOWER(email) = LOWER(:email)
+                 LIMIT 1'
             );
             // Native prepares need a distinct placeholder for each occurrence
             $stmt->execute([':name' => $login, ':email' => $login]);
@@ -29,8 +31,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($user && password_verify($password, $user['password_hash'])) {
                 complete_login_attempt($reservation, true);
                 session_regenerate_id(true);
+                $_SESSION = [];
                 $_SESSION['user_id']  = $user['id'];
                 $_SESSION['username'] = $user['username'];
+                $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
                 log_activity('login_success', 'user logged in', (int)$user['id']);
                 header('Location: dashboard.php');
                 exit;

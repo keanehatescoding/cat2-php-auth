@@ -8,10 +8,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_valid($_POST['csrf_token'] ?? 
     $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
     log_activity('logout', 'user logged out', $uid);
     $_SESSION = [];
-    session_destroy();
-    if (isset($_COOKIE[session_name()])) {
-        setcookie(session_name(), '', time() - 3600, '/');
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_destroy();
     }
+    $opts = session_cookie_options();
+    setcookie(session_name(), '', [
+        'expires'  => time() - 3600,
+        'path'     => $opts['path'],
+        'domain'   => $opts['domain'],
+        'secure'   => $opts['secure'],
+        'httponly' => $opts['httponly'],
+        'samesite' => $opts['samesite'],
+    ]);
 }
 
 header('Location: login.php');
