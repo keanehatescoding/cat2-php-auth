@@ -11,8 +11,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $error = 'Invalid form submission. Please try again.';
     } else {
-        $login    = trim($_POST['login'] ?? '');   // username or email
+        $rawLogin = $_POST['login'] ?? '';
+        $login    = is_string($rawLogin) ? trim($rawLogin) : '';   // username or email
         $password = $_POST['password'] ?? '';
+        if (!is_string($password)) {
+            $password = '';
+        }
         $postedNext = $_POST['next'] ?? $next;
         $next = is_string($postedNext) ? $postedNext : '';
 

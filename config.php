@@ -69,7 +69,7 @@ function ensure_security_tables(PDO $pdo): void
     }
 }
 
-function e(?string $value): string
+function e(mixed $value = null): string
 {
     return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
 }
@@ -146,7 +146,7 @@ function start_session(): void
     send_security_headers();
 }
 
-function is_safe_redirect_target(?string $target): bool
+function is_safe_redirect_target(mixed $target = null): bool
 {
     if (!is_string($target) || $target === '') {
         return false;
@@ -286,8 +286,11 @@ function release_form_ip_lock(PDO $pdo, ?string $name): void
     }
 }
 
-function normalize_email(string $email): string
+function normalize_email(mixed $email): string
 {
+    if (!is_string($email)) {
+        return '';
+    }
     return strtolower(trim($email));
 }
 

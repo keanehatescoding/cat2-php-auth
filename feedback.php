@@ -10,8 +10,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Invalid form submission. Please try again.';
     } else {
-        $name    = trim($_POST['name'] ?? '');
-        $message = trim($_POST['message'] ?? '');
+        $rawName = $_POST['name'] ?? '';
+        $name = is_string($rawName) ? trim($rawName) : '';
+        $rawMessage = $_POST['message'] ?? '';
+        $message = is_string($rawMessage) ? trim($rawMessage) : '';
 
         if ($name === '' || mb_strlen($name) > 100) {
             $errors[] = 'Name is required (max 100 characters).';
