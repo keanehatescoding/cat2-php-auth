@@ -5,6 +5,8 @@ start_session();
 $pageTitle = 'Feedback';
 $errors = [];
 $saved = false;
+$name = '';
+$message = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
@@ -79,11 +81,11 @@ require __DIR__ . '/layout_header.php';
     <?= csrf_field() ?>
     <div class="mb-3">
         <label class="form-label" for="name">Name</label>
-        <input class="form-control" id="name" name="name" maxlength="100" required>
+        <input class="form-control" id="name" name="name" maxlength="100" value="<?= e($name) ?>" required>
     </div>
     <div class="mb-3">
         <label class="form-label" for="message">Message</label>
-        <textarea class="form-control" id="message" name="message" rows="3" required></textarea>
+        <textarea class="form-control" id="message" name="message" rows="3" required><?= e($message) ?></textarea>
     </div>
     <button class="btn btn-primary" type="submit">Submit</button>
 </form>

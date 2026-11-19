@@ -105,6 +105,8 @@ if ($challengeRequired && ($challengePair[0] === null || $challengePair[1] === n
     $challengePair = ensure_login_challenge();
 }
 
+$loginValue = isset($login) ? $login : (isset($_POST['login']) && is_string($_POST['login']) ? trim($_POST['login']) : '');
+
 require __DIR__ . '/layout_header.php';
 ?>
 <h1 class="h3 mb-3">Log in</h1>
@@ -120,7 +122,7 @@ require __DIR__ . '/layout_header.php';
     <?php endif; ?>
     <div class="mb-3">
         <label class="form-label" for="login">Username or email</label>
-        <input class="form-control" id="login" name="login" required autocomplete="username">
+        <input class="form-control" id="login" name="login" value="<?= e($loginValue) ?>" required autocomplete="username">
     </div>
     <div class="mb-3">
         <label class="form-label" for="password">Password</label>
