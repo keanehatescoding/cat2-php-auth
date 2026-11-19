@@ -146,11 +146,37 @@ function start_session(): void
     send_security_headers();
 }
 
+function is_safe_redirect_target(?string $target): bool
+{
+    if (!is_string($target) || $target === '') {
+        return false;
+    }
+    // Allow only same-origin relative paths within the app.
+    if (
+        $target[0] !== '/'
+        || str_starts_with($target, '//')
+        || str_contains($target, '\\')
+        || preg_match('/[\x00-\x1F\x7F]/', $target)
+    ) {
+        return false;
+    }
+    $parts = parse_url($target);
+    if ($parts === false || isset($parts['scheme']) || isset($parts['host'])) {
+        return false;
+    }
+    return true;
+}
+
 function require_login(): void
 {
     start_session();
     if (empty($_SESSION['user_id'])) {
-        header('Location: login.php');
+        $target = $_SERVER['REQUEST_URI'] ?? 'dashboard.php';
+        $location = 'login.php';
+        if (is_safe_redirect_target($target)) {
+            $location .= '?next=' . rawurlencode($target);
+        }
+        header('Location: ' . $location);
         exit;
     }
 }

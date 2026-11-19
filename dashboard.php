@@ -7,6 +7,8 @@ $userId = (int)$_SESSION['user_id'];
 
 $recentActivity = [];
 $recentFailures = 0;
+$lastLogin = $_SESSION['previous_login'] ?? null;
+$lastLoginKnown = array_key_exists('previous_login_known', $_SESSION) ? (bool)$_SESSION['previous_login_known'] : ($lastLogin !== null);
 try {
     $stmt = db()->prepare(
         'SELECT event_type, details, ip_address, created_at
@@ -51,7 +53,17 @@ try {
 require __DIR__ . '/layout_header.php';
 ?>
 <h1 class="h3">Welcome, <?= e($_SESSION['username']) ?></h1>
-<p class="text-muted">You are logged in. Server time: <?= e(date('Y-m-d H:i:s')) ?>, host: <?= e(gethostname() ?: 'unknown') ?>.</p>
+<p class="text-muted mb-1">You are logged in. Server time: <?= e(date('Y-m-d H:i:s')) ?>, host: <?= e(gethostname() ?: 'unknown') ?>.</p>
+<p class="text-muted">
+    Last successful login:
+    <?php if (is_array($lastLogin) && !empty($lastLogin['created_at'])): ?>
+        <strong><?= e((string)$lastLogin['created_at']) ?></strong> from <code><?= e((string)($lastLogin['ip_address'] ?? 'unknown')) ?></code>
+    <?php elseif ($lastLoginKnown): ?>
+        <span>This is your first recorded successful login.</span>
+    <?php else: ?>
+        <span class="text-muted">Previous login information is unavailable.</span>
+    <?php endif; ?>
+</p>
 
 <div class="row g-3 mb-4">
     <div class="col-md-6">
