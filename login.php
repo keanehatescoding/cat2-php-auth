@@ -7,6 +7,12 @@ $error = '';
 $rawNext = $_GET['next'] ?? ($_POST['next'] ?? '');
 $next = is_string($rawNext) ? $rawNext : '';
 
+if (!empty($_SESSION['user_id'])) {
+    $destination = is_safe_redirect_target($next) ? $next : 'dashboard.php';
+    header('Location: ' . $destination);
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $error = 'Invalid form submission. Please try again.';

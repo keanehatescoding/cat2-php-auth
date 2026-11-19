@@ -7,6 +7,11 @@ $errors = [];
 $success = false;
 $username = $email = '';
 
+if (!empty($_SESSION['user_id'])) {
+    header('Location: dashboard.php');
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Invalid form submission. Please try again.';
