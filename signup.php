@@ -23,6 +23,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if (strlen($password) < 8) {
             $errors[] = 'Password must be at least 8 characters.';
+        } elseif (!preg_match('/[A-Za-z]/', $password) || !preg_match('/\d/', $password)) {
+            $errors[] = 'Password must include at least one letter and one number.';
         }
 
         if (!$errors) {
@@ -35,6 +37,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':e' => $email,
                     ':h' => password_hash($password, PASSWORD_DEFAULT),
                 ]);
+                $newId = (int)db()->lastInsertId();
+                log_activity('signup', 'new account created: ' . $username, $newId);
                 $success = true;
                 $username = $email = '';
             } catch (PDOException $ex) {
@@ -74,8 +78,46 @@ require __DIR__ . '/layout_header.php';
     </div>
     <div class="mb-3">
         <label class="form-label" for="password">Password (min 8 characters)</label>
-        <input class="form-control" type="password" id="password" name="password" required>
+        <input class="form-control" type="password" id="password" name="password" required aria-describedby="pw-help pw-strength-text">
+        <div id="pw-help" class="form-text">Use at least 8 characters including a letter and a number.</div>
+        <div class="progress mt-2" style="height: 8px;" aria-hidden="true">
+            <div id="pw-strength-bar" class="progress-bar" role="progressbar" style="width: 0%"></div>
+        </div>
+        <div id="pw-strength-text" class="small mt-1 text-muted">Password strength: &mdash;</div>
     </div>
     <button class="btn btn-primary" type="submit">Sign up</button>
 </form>
+<script>
+(function () {
+    var input = document.getElementById('password');
+    var bar = document.getElementById('pw-strength-bar');
+    var text = document.getElementById('pw-strength-text');
+    if (!input || !bar || !text) return;
+
+    function score(pw) {
+        var s = 0;
+        if (!pw) return 0;
+        if (pw.length >= 8) s++;
+        if (pw.length >= 12) s++;
+        if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) s++;
+        if (/\d/.test(pw)) s++;
+        if (/[^A-Za-z0-9]/.test(pw)) s++;
+        return Math.min(s, 5);
+    }
+
+    function render() {
+        var s = score(input.value);
+        var labels = ['—', 'Weak', 'Fair', 'Good', 'Strong', 'Very strong'];
+        var classes = ['bg-secondary', 'bg-danger', 'bg-warning', 'bg-info', 'bg-primary', 'bg-success'];
+        var widths = ['0%', '20%', '40%', '60%', '80%', '100%'];
+        bar.style.width = widths[s];
+        bar.className = 'progress-bar ' + classes[s];
+        text.textContent = 'Password strength: ' + labels[s];
+        text.className = 'small mt-1 ' + (s <= 1 ? 'text-danger' : s <= 3 ? 'text-muted' : 'text-success');
+    }
+
+    input.addEventListener('input', render);
+    render();
+})();
+</script>
 <?php require __DIR__ . '/layout_footer.php'; ?>

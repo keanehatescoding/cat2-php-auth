@@ -29,6 +29,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':n'   => $name,
                 ':m'   => $message,
             ]);
+            $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+            log_activity('feedback_submitted', 'feedback saved for ' . $name, $uid);
             // Post/Redirect/Get avoids duplicate inserts on refresh
             header('Location: feedback.php?saved=1');
             exit;

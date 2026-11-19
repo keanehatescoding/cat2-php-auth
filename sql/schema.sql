@@ -20,3 +20,26 @@ CREATE TABLE IF NOT EXISTS feedback (
     created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_feedback_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
+
+-- Creative/security additions: login throttling and activity auditing.
+CREATE TABLE IF NOT EXISTS login_attempts (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    username    VARCHAR(100) NOT NULL,
+    ip_address  VARCHAR(45)  NOT NULL,
+    succeeded   TINYINT(1)   NOT NULL DEFAULT 0,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_login_attempts_lookup (username, created_at),
+    INDEX idx_login_attempts_ip (ip_address, created_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS activity_log (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id     INT UNSIGNED NULL,
+    event_type  VARCHAR(50)  NOT NULL,
+    details     VARCHAR(255) NULL,
+    ip_address  VARCHAR(45)  NULL,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_activity_log_user (user_id, created_at),
+    INDEX idx_activity_log_event (event_type, created_at),
+    CONSTRAINT fk_activity_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
