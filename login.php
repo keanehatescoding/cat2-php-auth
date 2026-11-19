@@ -33,7 +33,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($challengeRequired && !login_challenge_valid($_POST['challenge_answer'] ?? '')) {
-            $error = 'Please solve the security check and try again.';
+            $reservation = begin_login_attempt($throttleKey);
+            [$allowed, , $windowMinutes] = $reservation;
+            complete_login_attempt($reservation, false);
+            $error = $allowed
+                ? 'Please solve the security check and try again.'
+                : "Too many failed login attempts. Please try again in about {$windowMinutes} minutes.";
             $challengePair = rotate_login_challenge();
             log_activity('login_challenge_failed', 'challenge failed for ' . $login);
         } else {

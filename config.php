@@ -345,10 +345,10 @@ function login_challenge_valid($answer): bool
         return false;
     }
     $answer = trim((string)$answer);
-    if ($answer === '' || !ctype_digit(ltrim($answer, '+'))) {
-        // allow plain digits
+    if ($answer === '' || !preg_match('/^\d+$/', $answer)) {
+        return false;
     }
-    $ok = hash_equals((string)$expected, (string)(int)$answer);
+    $ok = hash_equals((string)$expected, $answer);
     if ($ok) {
         unset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b']);
     }
