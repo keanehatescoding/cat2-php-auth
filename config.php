@@ -259,7 +259,7 @@ function recent_event_count(string $eventType, int $minutes, ?int $userId = null
 function acquire_form_ip_lock(PDO $pdo, ?string $ip = null): ?string
 {
     $ip = $ip ?? client_ip();
-    $name = 'form_ip_' . hash('sha256', $ip);
+    $name = substr('form_' . hash('sha256', 'ip|' . $ip), 0, 64);
     try {
         $stmt = $pdo->prepare('SELECT GET_LOCK(:name, 10) AS got');
         $stmt->execute([':name' => $name]);
@@ -358,8 +358,8 @@ function login_challenge_valid($answer): bool
 function acquire_login_locks(PDO $pdo, string $username, string $ip): array
 {
     $names = [
-        'login_u_' . hash('sha256', $username),
-        'login_i_' . hash('sha256', $ip),
+        substr('lu_' . hash('sha256', 'u|' . $username), 0, 64),
+        substr('li_' . hash('sha256', 'i|' . $ip), 0, 64),
     ];
     sort($names, SORT_STRING);
     $names = array_values(array_unique($names));
