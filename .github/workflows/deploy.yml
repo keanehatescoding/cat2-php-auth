@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   lint:
+    name: CI and Deploy (lint)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +30,7 @@ jobs:
           php tests/smoke.php
 
   integration:
+    name: CI and Deploy (integration)
     runs-on: ubuntu-latest
     services:
       mariadb:
@@ -66,6 +68,7 @@ jobs:
         run: bash tests/integration_auth.sh
 
   deploy:
+    name: CI and Deploy (deploy)
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [lint, integration]
     runs-on: ubuntu-latest
