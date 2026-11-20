@@ -19,6 +19,7 @@ $isAdminUser = $loggedIn && function_exists('is_current_user_admin') && is_curre
     <div class="container">
         <a class="navbar-brand" href="index.php">CAT 2 Server Admin</a>
         <div class="navbar-nav ms-auto">
+            <a class="nav-link" href="code-of-conduct.php">Code of Conduct</a>
             <?php if ($loggedIn): ?>
                 <a class="nav-link" href="dashboard.php">Dashboard</a>
                 <a class="nav-link" href="feedback.php">Feedback</a>
