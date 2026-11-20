@@ -23,3 +23,6 @@ jobs:
           for f in $files; do
             php -l "$f"
           done
+
+      - name: Run smoke tests
+        run: php tests/smoke.php
