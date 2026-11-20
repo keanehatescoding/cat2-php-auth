@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   lint:
+    name: PHP Lint (lint)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +32,7 @@ jobs:
         run: php tests/smoke.php
 
   integration:
+    name: PHP Lint (integration)
     runs-on: ubuntu-latest
     services:
       mariadb:
