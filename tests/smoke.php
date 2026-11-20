@@ -10,7 +10,7 @@ function fail(string $msg): void { global $failures; $failures++; echo "[fail] $
 $requiredFiles = [
     'config.php','index.php','login.php','signup.php','logout.php','dashboard.php','feedback.php',
     'serverless_demo.php','health.php','layout_header.php','layout_footer.php','sql/schema.sql',
-    'password-meter.js','style.css','tests/smoke.php','docs/rollback.md',
+    'password-meter.js','style.css','tests/smoke.php','tests/helpers_test.php','tests/integration_auth.sh','docs/rollback.md',
 ];
 foreach ($requiredFiles as $f) {
     file_exists($root . '/' . $f) ? ok("file exists: $f") : fail("missing file: $f");
