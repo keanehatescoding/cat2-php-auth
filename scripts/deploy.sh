@@ -7,7 +7,7 @@ set -euo pipefail
 #
 # Notes:
 # - Requires SSH access (and sudo on target if files are owned by www-data/root).
-# - Syncs tracked app files; excludes git metadata and local env artifacts.
+# - Excludes git metadata and local env artifacts from the deployment archive.
 # - Review and adapt for your environment before use.
 
 TARGET_HOST="${TARGET_HOST:-}"
@@ -31,20 +31,38 @@ TMP_TAR="$(mktemp /tmp/cat2-deploy.XXXXXX.tar.gz)"
 trap 'rm -f "$TMP_TAR"' EXIT
 
 # Deploy core app files (adjust list as needed).
-tar czf "$TMP_TAR" \
-  config.php dashboard.php feedback.php health.php index.php \
-  layout_footer.php layout_header.php login.php logout.php \
-  serverless_demo.php signup.php style.css password-meter.js \
-  README.md SECURITY.md sql serverless tests scripts docs 2>/dev/null || \
-tar czf "$TMP_TAR" \
-  config.php dashboard.php feedback.php health.php index.php \
-  layout_footer.php layout_header.php login.php logout.php \
-  serverless_demo.php signup.php style.css password-meter.js \
+# Exclude local env files that may contain secrets.
+TAR_EXCLUDES=(--exclude='serverless/.env' --exclude='serverless/**/.env' --exclude='./serverless/.env')
+TAR_FILES=(
+  config.php dashboard.php feedback.php health.php index.php
+  layout_footer.php layout_header.php login.php logout.php
+  serverless_demo.php signup.php style.css password-meter.js
   README.md SECURITY.md sql serverless tests scripts
+)
+if [[ -d docs ]]; then
+  TAR_FILES+=(docs)
+fi
+tar czf "$TMP_TAR" "${TAR_EXCLUDES[@]}" "${TAR_FILES[@]}"
 
-scp $SSH_OPTS "$TMP_TAR" "$TARGET_HOST:/tmp/cat2-deploy.tar.gz"
-ssh $SSH_OPTS "$TARGET_HOST" "sudo tar xzf /tmp/cat2-deploy.tar.gz -C '$TARGET_PATH' \
-  && sudo chown -R www-data:www-data '$TARGET_PATH' \
-  && rm -f /tmp/cat2-deploy.tar.gz \
-  && sudo php -l '$TARGET_PATH/config.php' '$TARGET_PATH/login.php' '$TARGET_PATH/health.php' >/dev/null \
-  && echo DEPLOYED_TO='$TARGET_PATH'"
+LOCK_NAME="cat2-deploy-$(printf '%s' "$TARGET_PATH" | sha256sum | cut -c1-16).lock"
+REMOTE_TMP="/tmp/cat2-deploy.$RANDOM.$RANDOM.$$.tar.gz"
+
+# shellcheck disable=SC2086
+scp $SSH_OPTS "$TMP_TAR" "$TARGET_HOST:$REMOTE_TMP"
+# shellcheck disable=SC2086
+ssh $SSH_OPTS "$TARGET_HOST" "TARGET_PATH=$(printf '%q' "$TARGET_PATH") REMOTE_TMP=$(printf '%q' "$REMOTE_TMP") LOCK_NAME=$(printf '%q' "$LOCK_NAME") bash -s" <<'REMOTE'
+set -euo pipefail
+LOCK_PATH="/var/lock/${LOCK_NAME}"
+cleanup() { rm -f "$REMOTE_TMP"; }
+trap cleanup EXIT
+sudo mkdir -p /var/lock
+(
+  flock 9
+  sudo tar xzf "$REMOTE_TMP" -C "$TARGET_PATH"
+  sudo chown -R www-data:www-data "$TARGET_PATH"
+  for f in config.php login.php health.php; do
+    sudo php -l "$TARGET_PATH/$f" >/dev/null
+  done
+  echo "DEPLOYED_TO=$TARGET_PATH"
+) 9>"$LOCK_PATH"
+REMOTE

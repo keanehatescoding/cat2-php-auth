@@ -30,28 +30,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Invalid username/email or password.';
         log_activity('login_honeypot', 'honeypot triggered for ' . $login);
     } else {
-        $challengeRequired = login_challenge_required($throttleKey);
-        if ($challengeRequired && ($challengePair[0] === null || $challengePair[1] === null)) {
-            $challengePair = ensure_login_challenge();
-        }
+        $reservation = begin_login_attempt($throttleKey);
+        [$allowed, $attemptId, $windowMinutes, $locks, $pdo, $failureCountBeforeReservation] = array_pad($reservation, 6, null);
 
-        if ($challengeRequired && !login_challenge_valid($_POST['challenge_answer'] ?? '')) {
-            $reservation = begin_login_attempt($throttleKey);
-            [$allowed, , $windowMinutes] = $reservation;
+        if (!$allowed) {
             complete_login_attempt($reservation, false);
-            $error = $allowed
-                ? 'Please solve the security check and try again.'
-                : "Too many failed login attempts. Please try again in about {$windowMinutes} minutes.";
+            $error = "Too many failed login attempts. Please try again in about {$windowMinutes} minutes.";
+            $challengeRequired = true;
             $challengePair = rotate_login_challenge();
-            log_activity('login_challenge_failed', 'challenge failed for ' . $login);
+            log_activity('login_blocked', 'throttled login attempt for ' . $login);
         } else {
-            $reservation = begin_login_attempt($throttleKey);
-            [$allowed, , $windowMinutes] = $reservation;
-            if (!$allowed) {
+            $challengeRequired = ($failureCountBeforeReservation !== null)
+                ? ($failureCountBeforeReservation >= 2)
+                : login_challenge_required($throttleKey);
+            if ($challengeRequired && ($challengePair[0] === null || $challengePair[1] === null)) {
+                $challengePair = ensure_login_challenge();
+            }
+
+            if ($challengeRequired && !login_challenge_valid($_POST['challenge_answer'] ?? '')) {
                 complete_login_attempt($reservation, false);
-                $error = "Too many failed login attempts. Please try again in about {$windowMinutes} minutes.";
+                $error = 'Please solve the security check and try again.';
                 $challengePair = rotate_login_challenge();
-                log_activity('login_blocked', 'throttled login attempt for ' . $login);
+                log_activity('login_challenge_failed', 'challenge failed for ' . $login);
             } else {
                 $stmt = db()->prepare(
                     'SELECT id, username, password_hash FROM users
@@ -103,12 +103,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$challengeRequired = login_challenge_required(isset($login) && $login !== '' ? $login : client_ip());
+$challengeKey = isset($login) && $login !== '' ? $login : $initialLogin;
+$challengeKey = $challengeKey !== '' ? $challengeKey : client_ip();
+$challengeRequired = login_challenge_required($challengeKey) || $challengeRequired;
 if ($challengeRequired && ($challengePair[0] === null || $challengePair[1] === null)) {
     $challengePair = ensure_login_challenge();
 }
 
-$loginValue = isset($login) ? $login : (isset($_POST['login']) && is_string($_POST['login']) ? trim($_POST['login']) : '');
+$loginValue = isset($login) ? $login : $initialLogin;
 
 require __DIR__ . '/layout_header.php';
 ?>

@@ -414,9 +414,9 @@ function begin_login_attempt(string $username): array
         $countStmt->bindValue(':u', $username);
         $countStmt->bindValue(':ip', $ip);
         $countStmt->execute();
-        $n = (int)($countStmt->fetch()['n'] ?? 0);
-        if ($n >= $maxFailures) {
-            return [false, null, $windowMinutes, $locks, $pdo];
+        $failureCountBeforeReservation = (int)($countStmt->fetch()['n'] ?? 0);
+        if ($failureCountBeforeReservation >= $maxFailures) {
+            return [false, null, $windowMinutes, $locks, $pdo, $failureCountBeforeReservation];
         }
 
         $insert = $pdo->prepare(
@@ -431,20 +431,20 @@ function begin_login_attempt(string $username): array
         if ($nWithReservation > $maxFailures) {
             $delete = $pdo->prepare('DELETE FROM login_attempts WHERE id = :id');
             $delete->execute([':id' => $attemptId]);
-            return [false, null, $windowMinutes, $locks, $pdo];
+            return [false, null, $windowMinutes, $locks, $pdo, $failureCountBeforeReservation];
         }
 
-        return [true, $attemptId, $windowMinutes, $locks, $pdo];
+        return [true, $attemptId, $windowMinutes, $locks, $pdo, $failureCountBeforeReservation];
     } catch (Throwable $e) {
         // Fail open for availability, but log for operators.
         error_log('begin_login_attempt failed: ' . $e->getMessage());
-        return [true, null, $windowMinutes, $locks, $pdo];
+        return [true, null, $windowMinutes, $locks, $pdo, null];
     }
 }
 
 function complete_login_attempt($reservation, bool $succeeded): void
 {
-    [, $attemptId, , $locks, $pdo] = $reservation + [null, null, null, [], null];
+    [, $attemptId, , $locks, $pdo] = array_pad($reservation, 6, null);
     try {
         if ($attemptId !== null && $pdo instanceof PDO) {
             if ($succeeded) {
