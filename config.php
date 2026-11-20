@@ -119,6 +119,152 @@ function session_cookie_options(): array
     ];
 }
 
+function captcha_provider(): string
+{
+    $provider = strtolower(trim((string)(getenv('CAT2_CAPTCHA_PROVIDER') ?: 'turnstile')));
+    return $provider !== '' ? $provider : 'turnstile';
+}
+
+function captcha_site_key(): string
+{
+    return trim((string)(getenv('CAT2_CAPTCHA_SITE_KEY') ?: ''));
+}
+
+function captcha_secret_key(): string
+{
+    return trim((string)(getenv('CAT2_CAPTCHA_SECRET_KEY') ?: ''));
+}
+
+function captcha_protected_forms(): array
+{
+    $raw = getenv('CAT2_CAPTCHA_PROTECT');
+    $raw = is_string($raw) && trim($raw) !== '' ? $raw : 'signup,feedback';
+    $parts = array_map('trim', explode(',', strtolower($raw)));
+    $parts = array_values(array_filter($parts, static fn($v) => $v !== ''));
+    return $parts ?: ['signup', 'feedback'];
+}
+
+function captcha_fail_open(): bool
+{
+    $raw = getenv('CAT2_CAPTCHA_FAIL_OPEN');
+    if ($raw === false || $raw === '') {
+        return false;
+    }
+    return in_array(strtolower(trim((string)$raw)), ['1', 'true', 'yes', 'on'], true);
+}
+
+function captcha_enabled(): bool
+{
+    return captcha_provider() === 'turnstile'
+        && captcha_site_key() !== ''
+        && captcha_secret_key() !== '';
+}
+
+function captcha_enabled_for(string $form): bool
+{
+    return captcha_enabled() && in_array(strtolower(trim($form)), captcha_protected_forms(), true);
+}
+
+function captcha_widget_html(string $form): string
+{
+    if (!captcha_enabled_for($form)) {
+        return '';
+    }
+    return '<div class="cf-turnstile mt-3 mb-3" data-sitekey="' . e(captcha_site_key()) . '"></div>';
+}
+
+function verify_turnstile_response(?string $token, ?string $ip = null): array
+{
+    $secret = captcha_secret_key();
+    $token = is_string($token) ? trim($token) : '';
+    if ($secret === '' || $token === '') {
+        return [false, 'missing'];
+    }
+
+    $payload = http_build_query([
+        'secret' => $secret,
+        'response' => $token,
+        'remoteip' => $ip ?? client_ip(),
+    ]);
+
+    $responseBody = null;
+    $httpCode = 0;
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init('https://challenges.cloudflare.com/turnstile/v0/siteverify');
+        if ($ch !== false) {
+            curl_setopt_array($ch, [
+                CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => $payload,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 10,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
+            ]);
+            $responseBody = curl_exec($ch);
+            $httpCode = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            $curlErr = curl_error($ch);
+            curl_close($ch);
+            if ($responseBody === false) {
+                error_log('turnstile verify curl failed: ' . $curlErr);
+                $responseBody = null;
+            }
+        }
+    }
+
+    if ($responseBody === null) {
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'POST',
+                'header' => "Content-Type: application/x-www-form-urlencoded\r\n",
+                'content' => $payload,
+                'timeout' => 10,
+                'ignore_errors' => true,
+            ],
+        ]);
+        $responseBody = @file_get_contents('https://challenges.cloudflare.com/turnstile/v0/siteverify', false, $context);
+        if (isset($http_response_header[0]) && preg_match('#\s(\d{3})\s#', (string)$http_response_header[0], $m)) {
+            $httpCode = (int)$m[1];
+        }
+    }
+
+    if (!is_string($responseBody) || $responseBody === '' || $httpCode < 200 || $httpCode >= 300) {
+        error_log('turnstile verify unavailable: http=' . $httpCode);
+        return [false, 'unavailable'];
+    }
+
+    $data = json_decode($responseBody, true);
+    if (!is_array($data)) {
+        error_log('turnstile verify invalid response');
+        return [false, 'invalid_response'];
+    }
+
+    if (!empty($data['success'])) {
+        return [true, 'ok'];
+    }
+
+    $codes = $data['error-codes'] ?? [];
+    $codes = is_array($codes) ? implode(',', array_map('strval', $codes)) : '';
+    return [false, $codes !== '' ? $codes : 'failed'];
+}
+
+function captcha_verify_request(string $form): array
+{
+    if (!captcha_enabled_for($form)) {
+        return [true, 'disabled'];
+    }
+    $token = $_POST['cf-turnstile-response'] ?? null;
+    [$ok, $reason] = verify_turnstile_response(is_string($token) ? $token : null, client_ip());
+    if ($ok) {
+        return [true, 'ok'];
+    }
+    if ($reason === 'unavailable' && captcha_fail_open()) {
+        error_log('turnstile unavailable, fail-open for form=' . $form);
+        return [true, 'fail_open'];
+    }
+    return [false, $reason];
+}
+
 function send_security_headers(): void
 {
     static $sent = false;
@@ -130,8 +276,16 @@ function send_security_headers(): void
     header('X-Frame-Options: SAMEORIGIN');
     header('Referrer-Policy: strict-origin-when-cross-origin');
     header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+    $scriptSrc = "'self' https://cdn.jsdelivr.net";
+    $connectSrc = "'self'";
+    $frameSrc = "'none'";
+    if (captcha_enabled()) {
+        $scriptSrc .= ' https://challenges.cloudflare.com';
+        $connectSrc .= ' https://challenges.cloudflare.com';
+        $frameSrc = 'https://challenges.cloudflare.com';
+    }
     // CSP tightened to avoid inline scripts and inline style attributes.
-    header("Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: https:; style-src 'self' https://cdn.jsdelivr.net; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self'");
+    header("Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; frame-src {$frameSrc}; img-src 'self' data: https:; style-src 'self' https://cdn.jsdelivr.net; script-src {$scriptSrc}; connect-src {$connectSrc}");
     if (is_https_request()) {
         header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
     }

@@ -6,6 +6,7 @@ $pageTitle = 'Sign up';
 $errors = [];
 $success = false;
 $username = $email = '';
+$loadTurnstileScript = captcha_enabled_for('signup');
 
 if (!empty($_SESSION['user_id'])) {
     header('Location: dashboard.php');
@@ -22,6 +23,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $username = trim($_POST['username'] ?? '');
         $email    = normalize_email($_POST['email'] ?? '');
         $password = $_POST['password'] ?? '';
+
+        [$captchaOk, $captchaReason] = captcha_verify_request('signup');
+        if (!$captchaOk) {
+            $errors[] = 'Please complete the anti-abuse verification and try again.';
+            log_activity('signup_captcha_failed', 'captcha verification failed: ' . $captchaReason);
+        }
 
         if (!preg_match('/^[A-Za-z0-9_]{3,50}$/', $username)) {
             $errors[] = 'Username must be 3-50 characters: letters, numbers or underscore.';
@@ -111,6 +118,7 @@ require __DIR__ . '/layout_header.php';
         </div>
         <div id="pw-strength-text" class="small mt-1 text-muted">Password strength: &mdash;</div>
     </div>
+    <?= captcha_widget_html('signup') ?>
     <button class="btn btn-primary" type="submit">Sign up</button>
 </form>
 <script src="password-meter.js" defer></script>

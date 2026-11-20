@@ -7,6 +7,7 @@ $errors = [];
 $saved = false;
 $name = '';
 $message = '';
+$loadTurnstileScript = captcha_enabled_for('feedback');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name    = trim((string)($_POST['name'] ?? ''));
@@ -18,6 +19,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
         log_activity('feedback_honeypot', 'honeypot triggered', $uid);
     } else {
+        [$captchaOk, $captchaReason] = captcha_verify_request('feedback');
+        if (!$captchaOk) {
+            $errors[] = 'Please complete the anti-abuse verification and try again.';
+            $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+            log_activity('feedback_captcha_failed', 'captcha verification failed: ' . $captchaReason, $uid);
+        }
 
         $nameLen = function_exists('mb_strlen') ? mb_strlen($name) : strlen($name);
         if ($name === '' || $nameLen > 100) {
@@ -96,6 +103,7 @@ require __DIR__ . '/layout_header.php';
         <label class="form-label" for="message">Message</label>
         <textarea class="form-control" id="message" name="message" rows="3" required><?= e($message) ?></textarea>
     </div>
+    <?= captcha_widget_html('feedback') ?>
     <button class="btn btn-primary" type="submit">Submit</button>
 </form>
 
