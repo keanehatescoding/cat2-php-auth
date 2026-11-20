@@ -10,7 +10,7 @@ function fail(string $msg): void { global $failures; $failures++; echo "[fail] $
 $requiredFiles = [
     'config.php','index.php','login.php','signup.php','logout.php','dashboard.php','feedback.php',
     'serverless_demo.php','health.php','layout_header.php','layout_footer.php','sql/schema.sql',
-    'password-meter.js','tests/smoke.php',
+    'password-meter.js','style.css','tests/smoke.php','docs/rollback.md',
 ];
 foreach ($requiredFiles as $f) {
     file_exists($root . '/' . $f) ? ok("file exists: $f") : fail("missing file: $f");
@@ -21,6 +21,13 @@ foreach (glob($root . '/*.php') ?: [] as $php) {
     $code = 0;
     exec('php -l ' . escapeshellarg($php) . ' 2>&1', $out, $code);
     $code === 0 ? ok('lint: ' . basename($php)) : fail('lint: ' . basename($php) . ' -> ' . implode(' ', $out));
+}
+foreach (glob($root . '/tests/*.php') ?: [] as $php) {
+    if (basename($php) === 'smoke.php') continue;
+    $out = [];
+    $code = 0;
+    exec('php -l ' . escapeshellarg($php) . ' 2>&1', $out, $code);
+    $code === 0 ? ok('lint: tests/' . basename($php)) : fail('lint: tests/' . basename($php) . ' -> ' . implode(' ', $out));
 }
 
 $config = file_get_contents($root . '/config.php') ?: '';
@@ -34,6 +41,7 @@ $needles = [
     'function log_activity(',
     'function login_challenge_required(',
     "script-src 'self' https://cdn.jsdelivr.net; connect-src 'self'",
+    "style-src 'self' https://cdn.jsdelivr.net; script-src 'self' https://cdn.jsdelivr.net;",
 ];
 foreach ($needles as $n) {
     strpos($config, $n) !== false ? ok("config contains: $n") : fail("config missing: $n");
@@ -42,6 +50,11 @@ if (strpos($config, "script-src 'self' 'unsafe-inline'") === false) {
     ok('CSP script-src has no unsafe-inline');
 } else {
     fail('CSP script-src still allows unsafe-inline');
+}
+if (strpos($config, "style-src 'self' 'unsafe-inline'") === false) {
+    ok('CSP style-src has no unsafe-inline');
+} else {
+    fail('CSP style-src still allows unsafe-inline');
 }
 
 $health = file_get_contents($root . '/health.php') ?: '';
@@ -60,12 +73,22 @@ strpos($signup, 'name="website"') !== false ? ok('signup includes honeypot field
 $feedback = file_get_contents($root . '/feedback.php') ?: '';
 strpos($feedback, 'name="website"') !== false ? ok('feedback includes honeypot field') : fail('feedback missing honeypot field');
 
-// Basic security helper behavior checks (no DB required)
+$layout = file_get_contents($root . '/layout_header.php') ?: '';
+strpos($layout, 'style="') === false ? ok('layout_header has no inline style attribute') : fail('layout_header still has inline style attribute');
+$serverlessDemo = file_get_contents($root . '/serverless_demo.php') ?: '';
+strpos($serverlessDemo, 'style="') === false ? ok('serverless_demo has no inline style attribute') : fail('serverless_demo still has inline style attribute');
+strpos($signup, 'style="') === false ? ok('signup has no inline style attribute') : fail('signup still has inline style attribute');
+
+$style = file_get_contents($root . '/style.css') ?: '';
+foreach (['.main-container', '.pw-progress', '.pw-strength-bar', '.pre-wrap'] as $selector) {
+    strpos($style, $selector) !== false ? ok("style.css contains $selector") : fail("style.css missing $selector");
+}
+
+// Basic helper behavior checks (no DB required)
 require_once $root . '/config.php';
 is_safe_redirect_target('/dashboard.php') ? ok('safe redirect accepts /dashboard.php') : fail('safe redirect rejected /dashboard.php');
 is_safe_redirect_target('/dashboard.php?tab=security') ? ok('safe redirect accepts query string path') : fail('safe redirect rejected query string path');
 (!is_safe_redirect_target('https://evil.example') && !is_safe_redirect_target('//evil.example') && !is_safe_redirect_target("/\\evil.example") && !is_safe_redirect_target("/dashboard\n.php")) ? ok('safe redirect rejects external/unsafe targets') : fail('safe redirect accepted unsafe target');
-
 normalize_email('  User@Example.COM  ') === 'user@example.com' ? ok('normalize_email lowercases and trims') : fail('normalize_email behavior incorrect');
 
 if ($failures > 0) {

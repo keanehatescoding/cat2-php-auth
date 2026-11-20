@@ -106,8 +106,8 @@ require __DIR__ . '/layout_header.php';
         <label class="form-label" for="password">Password (min 8 characters)</label>
         <input class="form-control" type="password" id="password" name="password" required aria-describedby="pw-help pw-strength-text">
         <div id="pw-help" class="form-text">Use at least 8 characters including a letter and a number.</div>
-        <div class="progress mt-2" style="height: 8px;" aria-hidden="true">
-            <div id="pw-strength-bar" class="progress-bar" role="progressbar" style="width: 0%"></div>
+        <div class="progress mt-2 pw-progress" aria-hidden="true">
+            <div id="pw-strength-bar" class="progress-bar pw-strength-bar" role="progressbar"></div>
         </div>
         <div id="pw-strength-text" class="small mt-1 text-muted">Password strength: &mdash;</div>
     </div>

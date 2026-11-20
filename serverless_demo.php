@@ -60,7 +60,7 @@ require __DIR__ . '/layout_header.php';
     <div class="card card-body shadow-sm mb-4">
         <h2 class="h5">Function response</h2>
         <p class="mb-2"><strong>Status:</strong> <?= (int)$result['status'] ?></p>
-        <pre class="bg-light border rounded p-3 mb-0" style="white-space: pre-wrap;"><?= e(json_encode($result['body'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) ?></pre>
+        <pre class="bg-light border rounded p-3 mb-0 pre-wrap"><?= e(json_encode($result['body'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) ?></pre>
     </div>
 <?php endif; ?>
 

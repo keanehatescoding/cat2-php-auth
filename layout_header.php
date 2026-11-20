@@ -33,4 +33,4 @@ $loggedIn = !empty($_SESSION['user_id']);
         </div>
     </div>
 </nav>
-<main class="container" style="max-width: 720px;">
+<main class="container main-container">
