@@ -1,0 +1,70 @@
+name: PHP Lint
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: PHP Lint (lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Lint PHP files
+        run: |
+          set -euo pipefail
+          files=$(git ls-files '*.php')
+          for f in $files; do
+            php -l "$f"
+          done
+
+      - name: Run smoke tests
+        run: php tests/smoke.php
+
+  integration:
+    name: PHP Lint (integration)
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install MariaDB client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq mariadb-client
+
+      - name: Run DB-backed integration tests
+        env:
+          TEST_DB_HOST: 127.0.0.1
+          TEST_DB_NAME: CAT2_integration_test
+          TEST_DB_USER: root
+          TEST_DB_PASS: root
+          MYSQL_ADMIN_USER: root
+          MYSQL_ADMIN_PASS: root
+          PORT: 18081
+        run: bash tests/integration_auth.sh
