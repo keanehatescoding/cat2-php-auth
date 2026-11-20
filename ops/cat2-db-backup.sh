@@ -38,12 +38,20 @@ mariadb -e 'DROP DATABASE IF EXISTS CAT2_restore_verify;'
 mv "$TMP" "$OUT"
 find "$BACKUP_DIR" -type f -name 'cat2-*.sql.gz' -mtime +14 -delete
 
+OFFSITE_STATUS="not_configured"
 if [ -x "$OFFSITE_HOOK" ]; then
-  if ! "$OFFSITE_HOOK" "$OUT" >>"$LOG" 2>&1; then
+  if "$OFFSITE_HOOK" "$OUT" >>"$LOG" 2>&1; then
+    OFFSITE_STATUS="ok"
+  else
+    OFFSITE_STATUS="failed"
     echo "offsite hook failed" >>"$LOG"
     alert "CAT2 DB backup offsite upload failed for $(basename "$OUT")"
   fi
 fi
 
-echo "backup_ok ${OUT}" >>"$LOG"
+if [ "$OFFSITE_STATUS" = "failed" ]; then
+  echo "backup_ok_local_offsite_failed ${OUT}" >>"$LOG"
+else
+  echo "backup_ok ${OUT} offsite=${OFFSITE_STATUS}" >>"$LOG"
+fi
 SUCCESS=1

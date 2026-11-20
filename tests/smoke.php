@@ -49,6 +49,7 @@ $needles = [
     "frame-src {\$frameSrc}",
     "style-src 'self' https://cdn.jsdelivr.net;",
     "challenges.cloudflare.com/turnstile/v0/siteverify",
+    "CAT2_CAPTCHA_TEST_BYPASS",
 ];
 foreach ($needles as $n) {
     strpos($config, $n) !== false ? ok("config contains: $n") : fail("config missing: $n");
@@ -76,13 +77,14 @@ $signup = file_get_contents($root . '/signup.php') ?: '';
 strpos($signup, 'password-meter.js') !== false ? ok('signup loads external password meter script') : fail('signup missing external password meter script');
 strpos($signup, '<script>') === false ? ok('signup has no inline script block') : fail('signup still has inline script block');
 strpos($signup, 'name="website"') !== false ? ok('signup includes honeypot field') : fail('signup missing honeypot field');
-strpos($signup, 'captcha_verify_request(\'signup\')') !== false ? ok('signup verifies captcha when enabled') : fail('signup missing captcha verification');
-strpos($signup, 'captcha_widget_html(\'signup\')') !== false ? ok('signup renders captcha widget placeholder') : fail('signup missing captcha widget placeholder');
+strpos($signup, "captcha_verify_request('signup')") !== false ? ok('signup verifies captcha when enabled') : fail('signup missing captcha verification');
+strpos($signup, "captcha_widget_html('signup')") !== false ? ok('signup renders captcha widget placeholder') : fail('signup missing captcha widget placeholder');
 
 $feedback = file_get_contents($root . '/feedback.php') ?: '';
 strpos($feedback, 'name="website"') !== false ? ok('feedback includes honeypot field') : fail('feedback missing honeypot field');
-strpos($feedback, 'captcha_verify_request(\'feedback\')') !== false ? ok('feedback verifies captcha when enabled') : fail('feedback missing captcha verification');
-strpos($feedback, 'captcha_widget_html(\'feedback\')') !== false ? ok('feedback renders captcha widget placeholder') : fail('feedback missing captcha widget placeholder');
+strpos($feedback, "captcha_verify_request('feedback')") !== false ? ok('feedback verifies captcha when enabled') : fail('feedback missing captcha verification');
+strpos($feedback, "captcha_widget_html('feedback')") !== false ? ok('feedback renders captcha widget placeholder') : fail('feedback missing captcha widget placeholder');
+strpos($feedback, '$isLoggedIn') !== false ? ok('feedback restricts feedback list visibility to logged-in users') : fail('feedback does not appear to restrict feedback list visibility');
 
 $layout = file_get_contents($root . '/layout_header.php') ?: '';
 strpos($layout, 'style="') === false ? ok('layout_header has no inline style attribute') : fail('layout_header still has inline style attribute');

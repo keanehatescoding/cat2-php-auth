@@ -68,14 +68,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $saved = isset($_GET['saved']);
-try {
-    $rows = db()->query(
-        'SELECT id, name, message, created_at FROM feedback ORDER BY id DESC LIMIT 50'
-    )->fetchAll();
-} catch (Throwable $e) {
-    error_log('feedback list failed: ' . $e->getMessage());
-    $rows = [];
-    $errors[] = 'Could not load feedback right now. Please try again later.';
+$isLoggedIn = !empty($_SESSION['user_id']);
+$rows = [];
+if ($isLoggedIn) {
+    try {
+        $rows = db()->query(
+            'SELECT id, name, message, created_at FROM feedback ORDER BY id DESC LIMIT 50'
+        )->fetchAll();
+    } catch (Throwable $e) {
+        error_log('feedback list failed: ' . $e->getMessage());
+        $rows = [];
+        $errors[] = 'Could not load feedback right now. Please try again later.';
+    }
 }
 
 require __DIR__ . '/layout_header.php';
@@ -108,6 +112,7 @@ require __DIR__ . '/layout_header.php';
 </form>
 
 <h2 class="h5">Saved feedback (latest 50)</h2>
+<?php if ($isLoggedIn): ?>
 <table class="table table-sm table-striped bg-white">
     <thead><tr><th>#</th><th>Name</th><th>Message</th><th>Created</th></tr></thead>
     <tbody>
@@ -124,4 +129,7 @@ require __DIR__ . '/layout_header.php';
     <?php endif; ?>
     </tbody>
 </table>
+<?php else: ?>
+<div class="alert alert-secondary">Log in to view submitted feedback entries.</div>
+<?php endif; ?>
 <?php require __DIR__ . '/layout_footer.php'; ?>

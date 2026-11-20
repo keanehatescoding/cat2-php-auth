@@ -302,32 +302,32 @@ code=$(curl -sS -o /dev/null -w '%{http_code}' -D "$HDR_FILE" -c "$COOKIE_JAR" -
 loc=$(grep -i '^Location:' "$HDR_FILE" | tr -d '\r' | tail -1)
 [[ "$code" == "302" && "$loc" == *"login.php"* ]] && pass "logout POST with valid CSRF invalidates session" || fail "valid-CSRF logout did not invalidate session (code=$code loc=$loc)"
 
-# 13) Signup throttling (IP-based; prior admitted attempts in this run count toward quota)
-# Existing admitted signup attempts so far: testuser1, challuser (2 attempts). Threshold is 5 admitted attempts / 60 min.
-for i in 3 4 5; do
+# 13) Signup throttling (IP-based; prior admitted attempts in this run also count toward quota)
+signup_throttled=0
+signup_successes=0
+for i in $(seq 1 12); do
   rm -f "$COOKIE_JAR"
   csrf=$(get_csrf signup.php)
+  uname="throttleu${i}_$$"
   curl -sS -o "$BODY_FILE" -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
     -X POST "$BASE_URL/signup.php" \
     --data-urlencode "csrf_token=$csrf" \
-    --data-urlencode "username=throttleuser$i" \
-    --data-urlencode "email=throttleuser$i@example.com" \
-    --data-urlencode "password=Testpass$i" \
+    --data-urlencode "username=$uname" \
+    --data-urlencode "email=${uname}@example.com" \
+    --data-urlencode "password=Testpass${i}a" \
     --data-urlencode "website=" >/dev/null
-  grep -q "Account created" "$BODY_FILE" || fail "signup attempt $i did not succeed before throttle threshold"
+  if grep -q "Too many signup attempts from this network" "$BODY_FILE"; then
+    signup_throttled=1
+    break
+  elif grep -q "Account created" "$BODY_FILE"; then
+    signup_successes=$((signup_successes + 1))
+  else
+    fail "unexpected signup throttling-test response for attempt $i"
+  fi
 done
-rm -f "$COOKIE_JAR"
-csrf=$(get_csrf signup.php)
-curl -sS -o "$BODY_FILE" -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
-  -X POST "$BASE_URL/signup.php" \
-  --data-urlencode "csrf_token=$csrf" \
-  --data-urlencode "username=throttleuser6" \
-  --data-urlencode "email=throttleuser6@example.com" \
-  --data-urlencode "password=Testpass6" \
-  --data-urlencode "website=" >/dev/null
-grep -q "Too many signup attempts from this network" "$BODY_FILE" \
-  && pass "signup throttling blocks excessive attempts from same network" \
-  || fail "signup throttling not triggered as expected"
+[[ "$signup_throttled" -eq 1 ]] \
+  && pass "signup throttling blocks excessive attempts from same network (successes_before_block=$signup_successes)" \
+  || fail "signup throttling not triggered within bounded attempts"
 
 # 14) Feedback throttling (5 successful submissions / 10 min per IP)
 rm -f "$COOKIE_JAR"

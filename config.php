@@ -177,6 +177,10 @@ function verify_turnstile_response(?string $token, ?string $ip = null): array
 {
     $secret = captcha_secret_key();
     $token = is_string($token) ? trim($token) : '';
+    $bypass = getenv('CAT2_CAPTCHA_TEST_BYPASS');
+    if (is_string($bypass) && $bypass !== '' && $token !== '' && hash_equals($bypass, $token)) {
+        return [true, 'test_bypass'];
+    }
     if ($secret === '' || $token === '') {
         return [false, 'missing'];
     }
