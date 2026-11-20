@@ -130,8 +130,8 @@ function send_security_headers(): void
     header('X-Frame-Options: SAMEORIGIN');
     header('Referrer-Policy: strict-origin-when-cross-origin');
     header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
-    // Keep CSP compatible with existing Bootstrap CDN assets and inline UI scripts.
-    header("Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self'");
+    // CSP tightened to avoid inline scripts; inline styles remain for current UI/layout attributes.
+    header("Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self'");
     if (is_https_request()) {
         header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
     }
@@ -259,7 +259,7 @@ function recent_event_count(string $eventType, int $minutes, ?int $userId = null
 function acquire_form_ip_lock(PDO $pdo, ?string $ip = null): ?string
 {
     $ip = $ip ?? client_ip();
-    $name = 'form_ip_' . hash('sha256', $ip);
+    $name = substr('form_' . hash('sha256', 'ip|' . $ip), 0, 64);
     try {
         $stmt = $pdo->prepare('SELECT GET_LOCK(:name, 10) AS got');
         $stmt->execute([':name' => $name]);
@@ -291,11 +291,75 @@ function normalize_email(string $email): string
     return strtolower(trim($email));
 }
 
+function current_login_failure_count(string $username): int
+{
+    $windowMinutes = 15;
+    $username = substr($username, 0, 100);
+    $ip = client_ip();
+    try {
+        $stmt = db()->prepare(
+            'SELECT COUNT(*) AS n FROM login_attempts
+             WHERE succeeded = 0 AND created_at >= (NOW() - INTERVAL ' . (int)$windowMinutes . ' MINUTE)
+               AND (username = :u OR ip_address = :ip)'
+        );
+        $stmt->execute([':u' => $username, ':ip' => $ip]);
+        return (int)($stmt->fetch()['n'] ?? 0);
+    } catch (Throwable $e) {
+        error_log('current_login_failure_count failed: ' . $e->getMessage());
+        return 0;
+    }
+}
+
+function login_challenge_required(string $username): bool
+{
+    return current_login_failure_count($username) >= 2;
+}
+
+function ensure_login_challenge(): array
+{
+    start_session();
+    $a = random_int(2, 9);
+    $b = random_int(1, 9);
+    if (!isset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b'])) {
+        $_SESSION['login_challenge_a'] = $a;
+        $_SESSION['login_challenge_b'] = $b;
+    }
+    return [(int)$_SESSION['login_challenge_a'], (int)$_SESSION['login_challenge_b']];
+}
+
+function rotate_login_challenge(): array
+{
+    start_session();
+    unset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b']);
+    return ensure_login_challenge();
+}
+
+function login_challenge_valid($answer): bool
+{
+    start_session();
+    if (!isset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b'])) {
+        return false;
+    }
+    $expected = (int)$_SESSION['login_challenge_a'] + (int)$_SESSION['login_challenge_b'];
+    if (!is_string($answer) && !is_int($answer)) {
+        return false;
+    }
+    $answer = trim((string)$answer);
+    if ($answer === '' || !preg_match('/^\d+$/', $answer)) {
+        return false;
+    }
+    $ok = hash_equals((string)$expected, $answer);
+    if ($ok) {
+        unset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b']);
+    }
+    return $ok;
+}
+
 function acquire_login_locks(PDO $pdo, string $username, string $ip): array
 {
     $names = [
-        'login_u_' . hash('sha256', $username),
-        'login_i_' . hash('sha256', $ip),
+        substr('lu_' . hash('sha256', 'u|' . $username), 0, 64),
+        substr('li_' . hash('sha256', 'i|' . $ip), 0, 64),
     ];
     sort($names, SORT_STRING);
     $names = array_values(array_unique($names));
@@ -350,9 +414,9 @@ function begin_login_attempt(string $username): array
         $countStmt->bindValue(':u', $username);
         $countStmt->bindValue(':ip', $ip);
         $countStmt->execute();
-        $n = (int)($countStmt->fetch()['n'] ?? 0);
-        if ($n >= $maxFailures) {
-            return [false, null, $windowMinutes, $locks, $pdo];
+        $failureCountBeforeReservation = (int)($countStmt->fetch()['n'] ?? 0);
+        if ($failureCountBeforeReservation >= $maxFailures) {
+            return [false, null, $windowMinutes, $locks, $pdo, $failureCountBeforeReservation];
         }
 
         $insert = $pdo->prepare(
@@ -367,20 +431,20 @@ function begin_login_attempt(string $username): array
         if ($nWithReservation > $maxFailures) {
             $delete = $pdo->prepare('DELETE FROM login_attempts WHERE id = :id');
             $delete->execute([':id' => $attemptId]);
-            return [false, null, $windowMinutes, $locks, $pdo];
+            return [false, null, $windowMinutes, $locks, $pdo, $failureCountBeforeReservation];
         }
 
-        return [true, $attemptId, $windowMinutes, $locks, $pdo];
+        return [true, $attemptId, $windowMinutes, $locks, $pdo, $failureCountBeforeReservation];
     } catch (Throwable $e) {
         // Fail open for availability, but log for operators.
         error_log('begin_login_attempt failed: ' . $e->getMessage());
-        return [true, null, $windowMinutes, $locks, $pdo];
+        return [true, null, $windowMinutes, $locks, $pdo, null];
     }
 }
 
 function complete_login_attempt($reservation, bool $succeeded): void
 {
-    [, $attemptId, , $locks, $pdo] = $reservation + [null, null, null, [], null];
+    [, $attemptId, , $locks, $pdo] = array_pad($reservation, 6, null);
     try {
         if ($attemptId !== null && $pdo instanceof PDO) {
             if ($succeeded) {

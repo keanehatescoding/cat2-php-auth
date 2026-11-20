@@ -1,0 +1,75 @@
+<?php
+declare(strict_types=1);
+
+$root = dirname(__DIR__);
+$failures = 0;
+
+function ok(string $msg): void { echo "[ok] $msg\n"; }
+function fail(string $msg): void { global $failures; $failures++; echo "[fail] $msg\n"; }
+
+$requiredFiles = [
+    'config.php','index.php','login.php','signup.php','logout.php','dashboard.php','feedback.php',
+    'serverless_demo.php','health.php','layout_header.php','layout_footer.php','sql/schema.sql',
+    'password-meter.js','tests/smoke.php',
+];
+foreach ($requiredFiles as $f) {
+    file_exists($root . '/' . $f) ? ok("file exists: $f") : fail("missing file: $f");
+}
+
+foreach (glob($root . '/*.php') ?: [] as $php) {
+    $out = [];
+    $code = 0;
+    exec('php -l ' . escapeshellarg($php) . ' 2>&1', $out, $code);
+    $code === 0 ? ok('lint: ' . basename($php)) : fail('lint: ' . basename($php) . ' -> ' . implode(' ', $out));
+}
+
+$config = file_get_contents($root . '/config.php') ?: '';
+$needles = [
+    'function db(',
+    'function start_session(',
+    'function csrf_token(',
+    'function require_login(',
+    'function is_safe_redirect_target(',
+    'function begin_login_attempt(',
+    'function log_activity(',
+    'function login_challenge_required(',
+    "script-src 'self' https://cdn.jsdelivr.net; connect-src 'self'",
+];
+foreach ($needles as $n) {
+    strpos($config, $n) !== false ? ok("config contains: $n") : fail("config missing: $n");
+}
+if (strpos($config, "script-src 'self' 'unsafe-inline'") === false) {
+    ok('CSP script-src has no unsafe-inline');
+} else {
+    fail('CSP script-src still allows unsafe-inline');
+}
+
+$health = file_get_contents($root . '/health.php') ?: '';
+strpos($health, 'CAT2_HEALTH_TOKEN') !== false ? ok('health supports CAT2_HEALTH_TOKEN') : fail('health missing CAT2_HEALTH_TOKEN support');
+strpos($health, "_GET['token']") === false ? ok('health does not accept query-string token') : fail('health still accepts query-string token');
+
+$login = file_get_contents($root . '/login.php') ?: '';
+strpos($login, 'challenge_answer') !== false ? ok('login includes step-up challenge field') : fail('login missing challenge field');
+strpos($login, 'name="website"') !== false ? ok('login includes honeypot field') : fail('login missing honeypot field');
+
+$signup = file_get_contents($root . '/signup.php') ?: '';
+strpos($signup, 'password-meter.js') !== false ? ok('signup loads external password meter script') : fail('signup missing external password meter script');
+strpos($signup, '<script>') === false ? ok('signup has no inline script block') : fail('signup still has inline script block');
+strpos($signup, 'name="website"') !== false ? ok('signup includes honeypot field') : fail('signup missing honeypot field');
+
+$feedback = file_get_contents($root . '/feedback.php') ?: '';
+strpos($feedback, 'name="website"') !== false ? ok('feedback includes honeypot field') : fail('feedback missing honeypot field');
+
+// Basic security helper behavior checks (no DB required)
+require_once $root . '/config.php';
+is_safe_redirect_target('/dashboard.php') ? ok('safe redirect accepts /dashboard.php') : fail('safe redirect rejected /dashboard.php');
+is_safe_redirect_target('/dashboard.php?tab=security') ? ok('safe redirect accepts query string path') : fail('safe redirect rejected query string path');
+(!is_safe_redirect_target('https://evil.example') && !is_safe_redirect_target('//evil.example') && !is_safe_redirect_target("/\\evil.example") && !is_safe_redirect_target("/dashboard\n.php")) ? ok('safe redirect rejects external/unsafe targets') : fail('safe redirect accepted unsafe target');
+
+normalize_email('  User@Example.COM  ') === 'user@example.com' ? ok('normalize_email lowercases and trims') : fail('normalize_email behavior incorrect');
+
+if ($failures > 0) {
+    fwrite(STDERR, "\nFailures: $failures\n");
+    exit(1);
+}
+echo "\nAll smoke checks passed.\n";
