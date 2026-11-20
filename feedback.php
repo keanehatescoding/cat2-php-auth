@@ -19,7 +19,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         log_activity('feedback_honeypot', 'honeypot triggered', $uid);
     } else {
 
-        if ($name === '' || mb_strlen($name) > 100) {
+        $nameLen = function_exists('mb_strlen') ? mb_strlen($name) : strlen($name);
+        if ($name === '' || $nameLen > 100) {
             $errors[] = 'Name is required (max 100 characters).';
         }
         if ($message === '') {

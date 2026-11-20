@@ -267,5 +267,91 @@ code=$(curl -sS -o "$BODY_FILE" -w '%{http_code}' "$BASE_URL/health.php")
 grep -q '"status"' "$BODY_FILE" && [[ "$code" == "200" || "$code" == "503" || "$code" == "403" ]] \
   && pass "health endpoint returns JSON status (code=$code)" || fail "health endpoint unexpected response: code=$code"
 
+# 12) Logout requires valid CSRF POST to invalidate session
+rm -f "$COOKIE_JAR"
+ans=$(get_login_challenge_answer "login.php")
+csrf=$(get_csrf "login.php")
+post_args=(
+  -X POST "$BASE_URL/login.php"
+  --data-urlencode "csrf_token=$csrf"
+  --data-urlencode "login=challuser"
+  --data-urlencode "password=Testpass3"
+  --data-urlencode "website="
+)
+if [[ -n "$ans" ]]; then
+  post_args+=(--data-urlencode "challenge_answer=$ans")
+fi
+code=$(curl -sS -o /dev/null -w '%{http_code}' -D "$HDR_FILE" -c "$COOKIE_JAR" -b "$COOKIE_JAR" "${post_args[@]}")
+loc=$(grep -i '^Location:' "$HDR_FILE" | tr -d '\r' | tail -1)
+[[ "$code" == "302" && "$loc" == *"dashboard.php"* ]] || fail "pre-logout login failed: code=$code loc=$loc"
+
+# POST logout with invalid CSRF should not invalidate session
+csrf=$(get_csrf dashboard.php)
+curl -sS -o "$BODY_FILE" -D "$HDR_FILE" -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+  -X POST "$BASE_URL/logout.php" \
+  --data-urlencode "csrf_token=invalid" >/dev/null
+code=$(curl -sS -o /dev/null -w '%{http_code}' -D "$HDR_FILE" -c "$COOKIE_JAR" -b "$COOKIE_JAR" "$BASE_URL/dashboard.php")
+[[ "$code" == "200" ]] && pass "logout POST with invalid CSRF does not invalidate session" || fail "invalid-CSRF logout unexpectedly invalidated session (dashboard code=$code)"
+
+# POST logout with valid CSRF invalidates session
+csrf=$(get_csrf dashboard.php)
+curl -sS -o /dev/null -D "$HDR_FILE" -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+  -X POST "$BASE_URL/logout.php" \
+  --data-urlencode "csrf_token=$csrf" >/dev/null
+code=$(curl -sS -o /dev/null -w '%{http_code}' -D "$HDR_FILE" -c "$COOKIE_JAR" -b "$COOKIE_JAR" "$BASE_URL/dashboard.php")
+loc=$(grep -i '^Location:' "$HDR_FILE" | tr -d '\r' | tail -1)
+[[ "$code" == "302" && "$loc" == *"login.php"* ]] && pass "logout POST with valid CSRF invalidates session" || fail "valid-CSRF logout did not invalidate session (code=$code loc=$loc)"
+
+# 13) Signup throttling (IP-based; prior admitted attempts in this run count toward quota)
+# Existing admitted signup attempts so far: testuser1, challuser (2 attempts). Threshold is 5 admitted attempts / 60 min.
+for i in 3 4 5; do
+  rm -f "$COOKIE_JAR"
+  csrf=$(get_csrf signup.php)
+  curl -sS -o "$BODY_FILE" -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+    -X POST "$BASE_URL/signup.php" \
+    --data-urlencode "csrf_token=$csrf" \
+    --data-urlencode "username=throttleuser$i" \
+    --data-urlencode "email=throttleuser$i@example.com" \
+    --data-urlencode "password=Testpass$i" \
+    --data-urlencode "website=" >/dev/null
+  grep -q "Account created" "$BODY_FILE" || fail "signup attempt $i did not succeed before throttle threshold"
+done
+rm -f "$COOKIE_JAR"
+csrf=$(get_csrf signup.php)
+curl -sS -o "$BODY_FILE" -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+  -X POST "$BASE_URL/signup.php" \
+  --data-urlencode "csrf_token=$csrf" \
+  --data-urlencode "username=throttleuser6" \
+  --data-urlencode "email=throttleuser6@example.com" \
+  --data-urlencode "password=Testpass6" \
+  --data-urlencode "website=" >/dev/null
+grep -q "Too many signup attempts from this network" "$BODY_FILE" \
+  && pass "signup throttling blocks excessive attempts from same network" \
+  || fail "signup throttling not triggered as expected"
+
+# 14) Feedback throttling (5 successful submissions / 10 min per IP)
+rm -f "$COOKIE_JAR"
+for i in 1 2 3 4 5; do
+  csrf=$(get_csrf feedback.php)
+  code=$(curl -sS -o /dev/null -w '%{http_code}' -D "$HDR_FILE" -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+    -X POST "$BASE_URL/feedback.php" \
+    --data-urlencode "csrf_token=$csrf" \
+    --data-urlencode "name=Tester $i" \
+    --data-urlencode "message=Feedback message $i" \
+    --data-urlencode "website=")
+  loc=$(grep -i '^Location:' "$HDR_FILE" | tr -d '\r' | tail -1)
+  [[ "$code" == "302" && "$loc" == *"feedback.php?saved=1"* ]] || fail "feedback submission $i did not succeed before throttle threshold (code=$code loc=$loc)"
+done
+csrf=$(get_csrf feedback.php)
+curl -sS -o "$BODY_FILE" -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+  -X POST "$BASE_URL/feedback.php" \
+  --data-urlencode "csrf_token=$csrf" \
+  --data-urlencode "name=Tester 6" \
+  --data-urlencode "message=Feedback message 6" \
+  --data-urlencode "website=" >/dev/null
+grep -q "Too many feedback submissions from this network" "$BODY_FILE" \
+  && pass "feedback throttling blocks excessive submissions from same network" \
+  || fail "feedback throttling not triggered as expected"
+
 echo ""
 echo "All integration checks passed."
