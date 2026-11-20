@@ -8,9 +8,10 @@ function ok(string $msg): void { echo "[ok] $msg\n"; }
 function fail(string $msg): void { global $failures; $failures++; echo "[fail] $msg\n"; }
 
 $requiredFiles = [
-    'config.php','index.php','login.php','signup.php','logout.php','dashboard.php','feedback.php',
+    'config.php','index.php','login.php','signup.php','logout.php','dashboard.php','feedback.php','admin.php',
     'serverless_demo.php','health.php','layout_header.php','layout_footer.php','sql/schema.sql',
     'password-meter.js','style.css','tests/smoke.php','tests/helpers_test.php','tests/integration_auth.sh','docs/rollback.md',
+    'scripts/promote_admin.php',
 ];
 foreach ($requiredFiles as $f) {
     file_exists($root . '/' . $f) ? ok("file exists: $f") : fail("missing file: $f");
@@ -40,6 +41,8 @@ $needles = [
     'function begin_login_attempt(',
     'function log_activity(',
     'function login_challenge_required(',
+    'function is_current_user_admin(',
+    'function require_admin(',
     'function captcha_enabled(',
     'function captcha_enabled_for(',
     'function captcha_verify_request(',
@@ -72,6 +75,8 @@ strpos($health, "_GET['token']") === false ? ok('health does not accept query-st
 $login = file_get_contents($root . '/login.php') ?: '';
 strpos($login, 'challenge_answer') !== false ? ok('login includes step-up challenge field') : fail('login missing challenge field');
 strpos($login, 'name="website"') !== false ? ok('login includes honeypot field') : fail('login missing honeypot field');
+strpos($login, "captcha_verify_request('login')") !== false ? ok('login supports captcha verification when enabled') : fail('login missing captcha verification support');
+strpos($login, "captcha_widget_html('login')") !== false ? ok('login renders captcha widget placeholder') : fail('login missing captcha widget placeholder');
 
 $signup = file_get_contents($root . '/signup.php') ?: '';
 strpos($signup, 'password-meter.js') !== false ? ok('signup loads external password meter script') : fail('signup missing external password meter script');
@@ -85,6 +90,14 @@ strpos($feedback, 'name="website"') !== false ? ok('feedback includes honeypot f
 strpos($feedback, "captcha_verify_request('feedback')") !== false ? ok('feedback verifies captcha when enabled') : fail('feedback missing captcha verification');
 strpos($feedback, "captcha_widget_html('feedback')") !== false ? ok('feedback renders captcha widget placeholder') : fail('feedback missing captcha widget placeholder');
 strpos($feedback, '$isLoggedIn') !== false ? ok('feedback restricts feedback list visibility to logged-in users') : fail('feedback does not appear to restrict feedback list visibility');
+
+$admin = file_get_contents($root . '/admin.php') ?: '';
+strpos($admin, 'require_admin()') !== false ? ok('admin page requires admin access') : fail('admin page missing require_admin');
+strpos($admin, 'delete_feedback') !== false ? ok('admin page supports feedback moderation') : fail('admin page missing feedback moderation action');
+strpos($admin, 'toggle_admin') !== false ? ok('admin page supports user role management') : fail('admin page missing user role management');
+
+$schema = file_get_contents($root . '/sql/schema.sql') ?: '';
+strpos($schema, 'is_admin') !== false ? ok('schema includes is_admin column') : fail('schema missing is_admin column');
 
 $layout = file_get_contents($root . '/layout_header.php') ?: '';
 strpos($layout, 'style="') === false ? ok('layout_header has no inline style attribute') : fail('layout_header still has inline style attribute');

@@ -3,6 +3,7 @@
 require_once __DIR__ . '/config.php';
 start_session();
 $loggedIn = !empty($_SESSION['user_id']);
+$isAdminUser = $loggedIn && function_exists('is_current_user_admin') && is_current_user_admin();
 ?>
 <!doctype html>
 <html lang="en">
@@ -22,6 +23,9 @@ $loggedIn = !empty($_SESSION['user_id']);
                 <a class="nav-link" href="dashboard.php">Dashboard</a>
                 <a class="nav-link" href="feedback.php">Feedback</a>
                 <a class="nav-link" href="serverless_demo.php">Serverless</a>
+                <?php if ($isAdminUser): ?>
+                <a class="nav-link" href="admin.php">Admin</a>
+                <?php endif; ?>
                 <form class="d-inline" method="post" action="logout.php">
                     <?= csrf_field() ?>
                     <button class="nav-link" type="submit">Logout</button>

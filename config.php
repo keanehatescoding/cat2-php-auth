@@ -63,6 +63,7 @@ function ensure_security_tables(PDO $pdo): void
         );
         try { $pdo->exec('CREATE INDEX idx_login_attempts_created ON login_attempts (created_at)'); } catch (Throwable $e) { /* index may already exist */ }
         try { $pdo->exec('CREATE INDEX idx_activity_log_created ON activity_log (created_at)'); } catch (Throwable $e) { /* index may already exist */ }
+        try { $pdo->exec('ALTER TABLE users ADD COLUMN is_admin TINYINT(1) NOT NULL DEFAULT 0'); } catch (Throwable $e) { /* column may already exist */ }
     } catch (Throwable $e) {
         // Degrade gracefully if the app DB user cannot create tables.
         error_log('ensure_security_tables failed: ' . $e->getMessage());
@@ -335,6 +336,41 @@ function require_login(): void
             $location .= '?next=' . rawurlencode($target);
         }
         header('Location: ' . $location);
+        exit;
+    }
+}
+
+function is_current_user_admin(): bool
+{
+    start_session();
+    if (empty($_SESSION['user_id'])) {
+        return false;
+    }
+    if (array_key_exists('is_admin', $_SESSION)) {
+        return !empty($_SESSION['is_admin']);
+    }
+    try {
+        $stmt = db()->prepare('SELECT is_admin FROM users WHERE id = :id LIMIT 1');
+        $stmt->execute([':id' => (int)$_SESSION['user_id']]);
+        $row = $stmt->fetch();
+        $isAdmin = !empty($row['is_admin']);
+        $_SESSION['is_admin'] = $isAdmin ? 1 : 0;
+        return $isAdmin;
+    } catch (Throwable $e) {
+        error_log('is_current_user_admin failed: ' . $e->getMessage());
+        return false;
+    }
+}
+
+function require_admin(): void
+{
+    require_login();
+    if (!is_current_user_admin()) {
+        http_response_code(403);
+        $pageTitle = 'Forbidden';
+        require __DIR__ . '/layout_header.php';
+        echo '<div class="alert alert-danger">You do not have permission to access this page.</div>';
+        require __DIR__ . '/layout_footer.php';
         exit;
     }
 }
