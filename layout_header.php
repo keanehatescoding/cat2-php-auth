@@ -3,6 +3,7 @@
 require_once __DIR__ . '/config.php';
 start_session();
 $loggedIn = !empty($_SESSION['user_id']);
+$isAdminUser = $loggedIn && function_exists('is_current_user_admin') && is_current_user_admin();
 ?>
 <!doctype html>
 <html lang="en">
@@ -18,10 +19,14 @@ $loggedIn = !empty($_SESSION['user_id']);
     <div class="container">
         <a class="navbar-brand" href="index.php">CAT 2 Server Admin</a>
         <div class="navbar-nav ms-auto">
+            <a class="nav-link" href="code-of-conduct.php">Code of Conduct</a>
             <?php if ($loggedIn): ?>
                 <a class="nav-link" href="dashboard.php">Dashboard</a>
                 <a class="nav-link" href="feedback.php">Feedback</a>
                 <a class="nav-link" href="serverless_demo.php">Serverless</a>
+                <?php if ($isAdminUser): ?>
+                <a class="nav-link" href="admin.php">Admin</a>
+                <?php endif; ?>
                 <form class="d-inline" method="post" action="logout.php">
                     <?= csrf_field() ?>
                     <button class="nav-link" type="submit">Logout</button>
@@ -33,4 +38,4 @@ $loggedIn = !empty($_SESSION['user_id']);
         </div>
     </div>
 </nav>
-<main class="container" style="max-width: 720px;">
+<main class="container main-container">

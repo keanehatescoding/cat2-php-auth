@@ -1,0 +1,2 @@
+#!/bin/sh
+/usr/local/bin/cat2-db-backup.sh >/var/log/cat2-db-backup.log 2>&1

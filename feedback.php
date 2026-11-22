@@ -5,17 +5,31 @@ start_session();
 $pageTitle = 'Feedback';
 $errors = [];
 $saved = false;
+$name = '';
+$message = '';
+$loadTurnstileScript = captcha_enabled_for('feedback');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $rawName = $_POST['name'] ?? '';
+    $name = is_string($rawName) ? trim($rawName) : '';
+    $rawMessage = $_POST['message'] ?? '';
+    $message = is_string($rawMessage) ? trim($rawMessage) : '';
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Invalid form submission. Please try again.';
+    } elseif (trim((string)($_POST['website'] ?? '')) !== '') {
+        $errors[] = 'Invalid form submission. Please try again.';
+        $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+        log_activity('feedback_honeypot', 'honeypot triggered', $uid);
     } else {
-        $rawName = $_POST['name'] ?? '';
-        $name = is_string($rawName) ? trim($rawName) : '';
-        $rawMessage = $_POST['message'] ?? '';
-        $message = is_string($rawMessage) ? trim($rawMessage) : '';
+        [$captchaOk, $captchaReason] = captcha_verify_request('feedback');
+        if (!$captchaOk) {
+            $errors[] = 'Please complete the anti-abuse verification and try again.';
+            $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+            log_activity('feedback_captcha_failed', 'captcha verification failed: ' . $captchaReason, $uid);
+        }
 
-        if ($name === '' || mb_strlen($name) > 100) {
+        $nameLen = function_exists('mb_strlen') ? mb_strlen($name) : strlen($name);
+        if ($name === '' || $nameLen > 100) {
             $errors[] = 'Name is required (max 100 characters).';
         }
         if ($message === '') {
@@ -56,14 +70,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $saved = isset($_GET['saved']);
-try {
-    $rows = db()->query(
-        'SELECT id, name, message, created_at FROM feedback ORDER BY id DESC LIMIT 50'
-    )->fetchAll();
-} catch (Throwable $e) {
-    error_log('feedback list failed: ' . $e->getMessage());
-    $rows = [];
-    $errors[] = 'Could not load feedback right now. Please try again later.';
+$isLoggedIn = !empty($_SESSION['user_id']);
+$rows = [];
+if ($isLoggedIn) {
+    try {
+        $rows = db()->query(
+            'SELECT id, name, message, created_at FROM feedback ORDER BY id DESC LIMIT 50'
+        )->fetchAll();
+    } catch (Throwable $e) {
+        error_log('feedback list failed: ' . $e->getMessage());
+        $rows = [];
+        $errors[] = 'Could not load feedback right now. Please try again later.';
+    }
 }
 
 require __DIR__ . '/layout_header.php';
@@ -79,18 +97,24 @@ require __DIR__ . '/layout_header.php';
 
 <form method="post" class="card card-body shadow-sm mb-4">
     <?= csrf_field() ?>
+    <div class="d-none" aria-hidden="true">
+        <label for="website">Website</label>
+        <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+    </div>
     <div class="mb-3">
         <label class="form-label" for="name">Name</label>
-        <input class="form-control" id="name" name="name" maxlength="100" required>
+        <input class="form-control" id="name" name="name" maxlength="100" value="<?= e($name) ?>" required>
     </div>
     <div class="mb-3">
         <label class="form-label" for="message">Message</label>
-        <textarea class="form-control" id="message" name="message" rows="3" required></textarea>
+        <textarea class="form-control" id="message" name="message" rows="3" required><?= e($message) ?></textarea>
     </div>
+    <?= captcha_widget_html('feedback') ?>
     <button class="btn btn-primary" type="submit">Submit</button>
 </form>
 
 <h2 class="h5">Saved feedback (latest 50)</h2>
+<?php if ($isLoggedIn): ?>
 <table class="table table-sm table-striped bg-white">
     <thead><tr><th>#</th><th>Name</th><th>Message</th><th>Created</th></tr></thead>
     <tbody>
@@ -107,4 +131,7 @@ require __DIR__ . '/layout_header.php';
     <?php endif; ?>
     </tbody>
 </table>
+<?php else: ?>
+<div class="alert alert-secondary">Log in to view submitted feedback entries.</div>
+<?php endif; ?>
 <?php require __DIR__ . '/layout_footer.php'; ?>

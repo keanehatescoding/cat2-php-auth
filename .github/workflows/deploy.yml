@@ -1,0 +1,98 @@
+name: CI and Deploy
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: CI and Deploy (lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Lint and smoke test
+        run: |
+          set -euo pipefail
+          files=$(git ls-files '*.php')
+          for f in $files; do php -l "$f"; done
+          php tests/smoke.php
+
+  integration:
+    name: CI and Deploy (integration)
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install MariaDB client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq mariadb-client
+
+      - name: Run DB-backed integration tests
+        env:
+          TEST_DB_HOST: 127.0.0.1
+          TEST_DB_NAME: CAT2_integration_test
+          TEST_DB_USER: root
+          TEST_DB_PASS: root
+          MYSQL_ADMIN_USER: root
+          MYSQL_ADMIN_PASS: root
+          PORT: 18081
+        run: bash tests/integration_auth.sh
+
+  deploy:
+    name: CI and Deploy (deploy)
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [lint, integration]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Optional: DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # If using DEPLOY_KNOWN_HOSTS secret, write it; otherwise accept-new:
+          ssh-keyscan -H 20.174.162.13 >> ~/.ssh/known_hosts 2>/dev/null || true
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          TARGET_HOST: ${{ secrets.DEPLOY_HOST }}   # e.g. deploy@20.174.162.13
+          TARGET_PATH: ${{ secrets.DEPLOY_PATH }}   # e.g. /var/www/html/cat2
+          SSH_OPTS: -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15
+        run: bash scripts/deploy.sh

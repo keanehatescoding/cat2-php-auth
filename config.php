@@ -63,6 +63,7 @@ function ensure_security_tables(PDO $pdo): void
         );
         try { $pdo->exec('CREATE INDEX idx_login_attempts_created ON login_attempts (created_at)'); } catch (Throwable $e) { /* index may already exist */ }
         try { $pdo->exec('CREATE INDEX idx_activity_log_created ON activity_log (created_at)'); } catch (Throwable $e) { /* index may already exist */ }
+        try { $pdo->exec('ALTER TABLE users ADD COLUMN is_admin TINYINT(1) NOT NULL DEFAULT 0'); } catch (Throwable $e) { /* column may already exist */ }
     } catch (Throwable $e) {
         // Degrade gracefully if the app DB user cannot create tables.
         error_log('ensure_security_tables failed: ' . $e->getMessage());
@@ -119,6 +120,156 @@ function session_cookie_options(): array
     ];
 }
 
+function captcha_provider(): string
+{
+    $provider = strtolower(trim((string)(getenv('CAT2_CAPTCHA_PROVIDER') ?: 'turnstile')));
+    return $provider !== '' ? $provider : 'turnstile';
+}
+
+function captcha_site_key(): string
+{
+    return trim((string)(getenv('CAT2_CAPTCHA_SITE_KEY') ?: ''));
+}
+
+function captcha_secret_key(): string
+{
+    return trim((string)(getenv('CAT2_CAPTCHA_SECRET_KEY') ?: ''));
+}
+
+function captcha_protected_forms(): array
+{
+    $raw = getenv('CAT2_CAPTCHA_PROTECT');
+    $raw = is_string($raw) && trim($raw) !== '' ? $raw : 'signup,feedback';
+    $parts = array_map('trim', explode(',', strtolower($raw)));
+    $parts = array_values(array_filter($parts, static fn($v) => $v !== ''));
+    return $parts ?: ['signup', 'feedback'];
+}
+
+function captcha_fail_open(): bool
+{
+    $raw = getenv('CAT2_CAPTCHA_FAIL_OPEN');
+    if ($raw === false || $raw === '') {
+        return false;
+    }
+    return in_array(strtolower(trim((string)$raw)), ['1', 'true', 'yes', 'on'], true);
+}
+
+function captcha_enabled(): bool
+{
+    return captcha_provider() === 'turnstile'
+        && captcha_site_key() !== ''
+        && captcha_secret_key() !== '';
+}
+
+function captcha_enabled_for(string $form): bool
+{
+    return captcha_enabled() && in_array(strtolower(trim($form)), captcha_protected_forms(), true);
+}
+
+function captcha_widget_html(string $form): string
+{
+    if (!captcha_enabled_for($form)) {
+        return '';
+    }
+    return '<div class="cf-turnstile mt-3 mb-3" data-sitekey="' . e(captcha_site_key()) . '"></div>';
+}
+
+function verify_turnstile_response(?string $token, ?string $ip = null): array
+{
+    $secret = captcha_secret_key();
+    $token = is_string($token) ? trim($token) : '';
+    $bypass = getenv('CAT2_CAPTCHA_TEST_BYPASS');
+    if (is_string($bypass) && $bypass !== '' && $token !== '' && hash_equals($bypass, $token)) {
+        return [true, 'test_bypass'];
+    }
+    if ($secret === '' || $token === '') {
+        return [false, 'missing'];
+    }
+
+    $payload = http_build_query([
+        'secret' => $secret,
+        'response' => $token,
+        'remoteip' => $ip ?? client_ip(),
+    ]);
+
+    $responseBody = null;
+    $httpCode = 0;
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init('https://challenges.cloudflare.com/turnstile/v0/siteverify');
+        if ($ch !== false) {
+            curl_setopt_array($ch, [
+                CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => $payload,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 10,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
+            ]);
+            $responseBody = curl_exec($ch);
+            $httpCode = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            $curlErr = curl_error($ch);
+            curl_close($ch);
+            if ($responseBody === false) {
+                error_log('turnstile verify curl failed: ' . $curlErr);
+                $responseBody = null;
+            }
+        }
+    }
+
+    if ($responseBody === null) {
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'POST',
+                'header' => "Content-Type: application/x-www-form-urlencoded\r\n",
+                'content' => $payload,
+                'timeout' => 10,
+                'ignore_errors' => true,
+            ],
+        ]);
+        $responseBody = @file_get_contents('https://challenges.cloudflare.com/turnstile/v0/siteverify', false, $context);
+        if (isset($http_response_header[0]) && preg_match('#\s(\d{3})\s#', (string)$http_response_header[0], $m)) {
+            $httpCode = (int)$m[1];
+        }
+    }
+
+    if (!is_string($responseBody) || $responseBody === '' || $httpCode < 200 || $httpCode >= 300) {
+        error_log('turnstile verify unavailable: http=' . $httpCode);
+        return [false, 'unavailable'];
+    }
+
+    $data = json_decode($responseBody, true);
+    if (!is_array($data)) {
+        error_log('turnstile verify invalid response');
+        return [false, 'invalid_response'];
+    }
+
+    if (!empty($data['success'])) {
+        return [true, 'ok'];
+    }
+
+    $codes = $data['error-codes'] ?? [];
+    $codes = is_array($codes) ? implode(',', array_map('strval', $codes)) : '';
+    return [false, $codes !== '' ? $codes : 'failed'];
+}
+
+function captcha_verify_request(string $form): array
+{
+    if (!captcha_enabled_for($form)) {
+        return [true, 'disabled'];
+    }
+    $token = $_POST['cf-turnstile-response'] ?? null;
+    [$ok, $reason] = verify_turnstile_response(is_string($token) ? $token : null, client_ip());
+    if ($ok) {
+        return [true, 'ok'];
+    }
+    if ($reason === 'unavailable' && captcha_fail_open()) {
+        error_log('turnstile unavailable, fail-open for form=' . $form);
+        return [true, 'fail_open'];
+    }
+    return [false, $reason];
+}
+
 function send_security_headers(): void
 {
     static $sent = false;
@@ -130,8 +281,16 @@ function send_security_headers(): void
     header('X-Frame-Options: SAMEORIGIN');
     header('Referrer-Policy: strict-origin-when-cross-origin');
     header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
-    // Keep CSP compatible with existing Bootstrap CDN assets and inline UI scripts.
-    header("Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self'");
+    $scriptSrc = "'self' https://cdn.jsdelivr.net";
+    $connectSrc = "'self'";
+    $frameSrc = "'none'";
+    if (captcha_enabled()) {
+        $scriptSrc .= ' https://challenges.cloudflare.com';
+        $connectSrc .= ' https://challenges.cloudflare.com';
+        $frameSrc = 'https://challenges.cloudflare.com';
+    }
+    // CSP tightened to avoid inline scripts and inline style attributes.
+    header("Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; frame-src {$frameSrc}; img-src 'self' data: https:; style-src 'self' https://cdn.jsdelivr.net; script-src {$scriptSrc}; connect-src {$connectSrc}");
     if (is_https_request()) {
         header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
     }
@@ -177,6 +336,41 @@ function require_login(): void
             $location .= '?next=' . rawurlencode($target);
         }
         header('Location: ' . $location);
+        exit;
+    }
+}
+
+function is_current_user_admin(): bool
+{
+    start_session();
+    if (empty($_SESSION['user_id'])) {
+        return false;
+    }
+    if (array_key_exists('is_admin', $_SESSION)) {
+        return !empty($_SESSION['is_admin']);
+    }
+    try {
+        $stmt = db()->prepare('SELECT is_admin FROM users WHERE id = :id LIMIT 1');
+        $stmt->execute([':id' => (int)$_SESSION['user_id']]);
+        $row = $stmt->fetch();
+        $isAdmin = !empty($row['is_admin']);
+        $_SESSION['is_admin'] = $isAdmin ? 1 : 0;
+        return $isAdmin;
+    } catch (Throwable $e) {
+        error_log('is_current_user_admin failed: ' . $e->getMessage());
+        return false;
+    }
+}
+
+function require_admin(): void
+{
+    require_login();
+    if (!is_current_user_admin()) {
+        http_response_code(403);
+        $pageTitle = 'Forbidden';
+        require __DIR__ . '/layout_header.php';
+        echo '<div class="alert alert-danger">You do not have permission to access this page.</div>';
+        require __DIR__ . '/layout_footer.php';
         exit;
     }
 }
@@ -259,7 +453,7 @@ function recent_event_count(string $eventType, int $minutes, ?int $userId = null
 function acquire_form_ip_lock(PDO $pdo, ?string $ip = null): ?string
 {
     $ip = $ip ?? client_ip();
-    $name = 'form_ip_' . hash('sha256', $ip);
+    $name = substr('form_' . hash('sha256', 'ip|' . $ip), 0, 64);
     try {
         $stmt = $pdo->prepare('SELECT GET_LOCK(:name, 10) AS got');
         $stmt->execute([':name' => $name]);
@@ -294,11 +488,75 @@ function normalize_email(mixed $email): string
     return strtolower(trim($email));
 }
 
+function current_login_failure_count(string $username): int
+{
+    $windowMinutes = 15;
+    $username = substr($username, 0, 100);
+    $ip = client_ip();
+    try {
+        $stmt = db()->prepare(
+            'SELECT COUNT(*) AS n FROM login_attempts
+             WHERE succeeded = 0 AND created_at >= (NOW() - INTERVAL ' . (int)$windowMinutes . ' MINUTE)
+               AND (username = :u OR ip_address = :ip)'
+        );
+        $stmt->execute([':u' => $username, ':ip' => $ip]);
+        return (int)($stmt->fetch()['n'] ?? 0);
+    } catch (Throwable $e) {
+        error_log('current_login_failure_count failed: ' . $e->getMessage());
+        return 0;
+    }
+}
+
+function login_challenge_required(string $username): bool
+{
+    return current_login_failure_count($username) >= 2;
+}
+
+function ensure_login_challenge(): array
+{
+    start_session();
+    $a = random_int(2, 9);
+    $b = random_int(1, 9);
+    if (!isset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b'])) {
+        $_SESSION['login_challenge_a'] = $a;
+        $_SESSION['login_challenge_b'] = $b;
+    }
+    return [(int)$_SESSION['login_challenge_a'], (int)$_SESSION['login_challenge_b']];
+}
+
+function rotate_login_challenge(): array
+{
+    start_session();
+    unset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b']);
+    return ensure_login_challenge();
+}
+
+function login_challenge_valid($answer): bool
+{
+    start_session();
+    if (!isset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b'])) {
+        return false;
+    }
+    $expected = (int)$_SESSION['login_challenge_a'] + (int)$_SESSION['login_challenge_b'];
+    if (!is_string($answer) && !is_int($answer)) {
+        return false;
+    }
+    $answer = trim((string)$answer);
+    if ($answer === '' || !preg_match('/^\d+$/', $answer)) {
+        return false;
+    }
+    $ok = hash_equals((string)$expected, $answer);
+    if ($ok) {
+        unset($_SESSION['login_challenge_a'], $_SESSION['login_challenge_b']);
+    }
+    return $ok;
+}
+
 function acquire_login_locks(PDO $pdo, string $username, string $ip): array
 {
     $names = [
-        'login_u_' . hash('sha256', $username),
-        'login_i_' . hash('sha256', $ip),
+        substr('lu_' . hash('sha256', 'u|' . $username), 0, 64),
+        substr('li_' . hash('sha256', 'i|' . $ip), 0, 64),
     ];
     sort($names, SORT_STRING);
     $names = array_values(array_unique($names));
@@ -353,9 +611,9 @@ function begin_login_attempt(string $username): array
         $countStmt->bindValue(':u', $username);
         $countStmt->bindValue(':ip', $ip);
         $countStmt->execute();
-        $n = (int)($countStmt->fetch()['n'] ?? 0);
-        if ($n >= $maxFailures) {
-            return [false, null, $windowMinutes, $locks, $pdo];
+        $failureCountBeforeReservation = (int)($countStmt->fetch()['n'] ?? 0);
+        if ($failureCountBeforeReservation >= $maxFailures) {
+            return [false, null, $windowMinutes, $locks, $pdo, $failureCountBeforeReservation];
         }
 
         $insert = $pdo->prepare(
@@ -370,20 +628,20 @@ function begin_login_attempt(string $username): array
         if ($nWithReservation > $maxFailures) {
             $delete = $pdo->prepare('DELETE FROM login_attempts WHERE id = :id');
             $delete->execute([':id' => $attemptId]);
-            return [false, null, $windowMinutes, $locks, $pdo];
+            return [false, null, $windowMinutes, $locks, $pdo, $failureCountBeforeReservation];
         }
 
-        return [true, $attemptId, $windowMinutes, $locks, $pdo];
+        return [true, $attemptId, $windowMinutes, $locks, $pdo, $failureCountBeforeReservation];
     } catch (Throwable $e) {
         // Fail open for availability, but log for operators.
         error_log('begin_login_attempt failed: ' . $e->getMessage());
-        return [true, null, $windowMinutes, $locks, $pdo];
+        return [true, null, $windowMinutes, $locks, $pdo, null];
     }
 }
 
 function complete_login_attempt($reservation, bool $succeeded): void
 {
-    [, $attemptId, , $locks, $pdo] = $reservation + [null, null, null, [], null];
+    [, $attemptId, , $locks, $pdo] = array_pad($reservation, 6, null);
     try {
         if ($attemptId !== null && $pdo instanceof PDO) {
             if ($succeeded) {

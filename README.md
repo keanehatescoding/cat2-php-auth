@@ -55,3 +55,11 @@ Complete certificate issuance/installation for your domain according to your cer
 
 ### Alternative: Docker Compose
 The included `docker-compose.yml` is a supported containerized deployment path. It provisions the MariaDB database/user/password from environment variables and initializes tables from `sql/schema.sql`. Set `CAT2_DB_PASS` and `MARIADB_ROOT_PASSWORD` (e.g. in `.env`) before starting the stack. For public deployments, place the service behind TLS/HTTPS before users access it.
+
+## Operations
+- **Health check:** `health.php` returns minimal JSON status. If `CAT2_HEALTH_TOKEN` is set in the web server environment, requests must include an `Authorization: Bearer <token>` header; otherwise the endpoint responds with `403`. Do not pass the token in the URL/query string. Example: `curl -H "Authorization: Bearer $CAT2_HEALTH_TOKEN" https://<your-domain>/cat2/health.php`.
+- **Database backups:** run regular `mariadb-dump` backups for `CAT2` (e.g. daily cron), store them in a restricted location (e.g. `/var/backups/cat2`, `700`), and apply retention/pruning and restore verification. A production backup script should also verify dumps (e.g. `gzip -t` and restore test to a temporary database) and can invoke an optional executable hook (e.g. `/etc/cat2-backup-offsite.sh <backup_path>`) for offsite copy.
+- **Monitoring/alerting:** run a periodic authenticated health probe and log results; optionally invoke an executable alert hook (e.g. `/etc/cat2-alert.sh "message"`) on failures. Configure an actual notification destination and offsite backup target for full operational coverage.
+- **TLS:** serve the site over HTTPS and automate certificate renewal where possible. For ACME HTTP-01 (e.g. Certbot webroot), allow `/.well-known/acme-challenge/` over HTTP while redirecting other traffic to HTTPS, and ensure Apache reloads after renewal.
+- **Deployments:** keep `/var/www/html/cat2` (or your deploy path) in sync with the `main` branch, run `php -l` on changed PHP files (and `php tests/smoke.php` if available), and reload/restart web services only when configuration changes require it.
+- **CI:** a PHP lint workflow is recommended for push/PR validation (`php -l` across tracked `*.php` files). If your Git push credentials lack the `workflow` scope, add/update `.github/workflows` using credentials that include it.
