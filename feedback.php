@@ -10,8 +10,10 @@ $message = '';
 $loadTurnstileScript = captcha_enabled_for('feedback');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name    = trim((string)($_POST['name'] ?? ''));
-    $message = trim((string)($_POST['message'] ?? ''));
+    $rawName = $_POST['name'] ?? '';
+    $name = is_string($rawName) ? trim($rawName) : '';
+    $rawMessage = $_POST['message'] ?? '';
+    $message = is_string($rawMessage) ? trim($rawMessage) : '';
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Invalid form submission. Please try again.';
     } elseif (trim((string)($_POST['website'] ?? '')) !== '') {

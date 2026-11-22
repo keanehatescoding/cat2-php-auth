@@ -20,9 +20,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = 'Invalid form submission. Please try again.';
         log_activity('signup_honeypot', 'honeypot triggered');
     } else {
-        $username = trim($_POST['username'] ?? '');
-        $email    = normalize_email($_POST['email'] ?? '');
+        $rawUsername = $_POST['username'] ?? '';
+        $username = is_string($rawUsername) ? trim($rawUsername) : '';
+        $rawEmail = $_POST['email'] ?? '';
+        $email = is_string($rawEmail) ? normalize_email($rawEmail) : '';
         $password = $_POST['password'] ?? '';
+        if (!is_string($password)) {
+            $password = '';
+        }
 
         [$captchaOk, $captchaReason] = captcha_verify_request('signup');
         if (!$captchaOk) {

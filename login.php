@@ -19,8 +19,12 @@ $challengePair = $challengeRequired ? ensure_login_challenge() : [null, null];
 $loadTurnstileScript = captcha_enabled_for('login');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $login    = trim((string)($_POST['login'] ?? ''));   // username or email
-    $password = (string)($_POST['password'] ?? '');
+    $rawLogin = $_POST['login'] ?? '';
+    $login    = is_string($rawLogin) ? trim($rawLogin) : '';   // username or email
+    $password = $_POST['password'] ?? '';
+    if (!is_string($password)) {
+        $password = '';
+    }
     $postedNext = $_POST['next'] ?? $next;
     $next = is_string($postedNext) ? $postedNext : '';
     $throttleKey = $login !== '' ? $login : client_ip();

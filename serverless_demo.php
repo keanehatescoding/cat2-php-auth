@@ -12,8 +12,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $error = 'Invalid form submission. Please try again.';
     } else {
-        $name = trim($_POST['name'] ?? '');
-        $message = trim($_POST['message'] ?? '');
+        $rawName = $_POST['name'] ?? '';
+        $name = is_string($rawName) ? trim($rawName) : '';
+        $rawMessage = $_POST['message'] ?? '';
+        $message = is_string($rawMessage) ? trim($rawMessage) : '';
 
         // Reuse the project's simulated AWS Lambda handler (serverless/handler.php)
         // by invoking it in-process as a function event. This demonstrates a
