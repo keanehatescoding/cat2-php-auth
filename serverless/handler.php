@@ -52,7 +52,7 @@ function handle(mixed $event): array
 
     $id = bin2hex(random_bytes(8));
     // Logs go to CloudWatch. The message text is not logged.
-    error_log(sprintf('feedback id=%s name_length=%d message_length=%d', $id, mb_strlen($name), mb_strlen($message)));
+    error_log(sprintf('feedback id=%s name_length=%d message_length=%d', $id, mb_strlen($name, 'UTF-8'), mb_strlen($message, 'UTF-8')));
 
     return [
         'statusCode' => 201,
