@@ -10,10 +10,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_valid($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Invalid form submission. Please try again.';
     } else {
-        $action = (string)($_POST['action'] ?? '');
+        $rawAction = $_POST['action'] ?? '';
+        $action = is_scalar($rawAction) ? (string)$rawAction : '';
         try {
             if ($action === 'delete_feedback') {
-                $id = isset($_POST['feedback_id']) ? (int)$_POST['feedback_id'] : 0;
+                $rawFeedbackId = $_POST['feedback_id'] ?? null;
+                $id = (is_int($rawFeedbackId) || is_string($rawFeedbackId)) ? (int)$rawFeedbackId : 0;
                 if ($id <= 0) {
                     $errors[] = 'Invalid feedback item.';
                 } else {
@@ -27,7 +29,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
             } elseif ($action === 'toggle_admin') {
-                $uid = isset($_POST['user_id']) ? (int)$_POST['user_id'] : 0;
+                $rawUserId = $_POST['user_id'] ?? null;
+                $uid = (is_int($rawUserId) || is_string($rawUserId)) ? (int)$rawUserId : 0;
                 if ($uid <= 0) {
                     $errors[] = 'Invalid user.';
                 } elseif ($uid === (int)$_SESSION['user_id']) {

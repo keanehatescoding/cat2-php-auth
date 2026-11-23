@@ -28,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             log_activity('feedback_captcha_failed', 'captcha verification failed: ' . $captchaReason, $uid);
         }
 
-        $nameLen = function_exists('mb_strlen') ? mb_strlen($name) : strlen($name);
+        $nameLen = function_exists('mb_strlen') ? mb_strlen($name, 'UTF-8') : strlen($name);
         if ($name === '' || $nameLen > 100) {
             $errors[] = 'Name is required (max 100 characters).';
         }
@@ -49,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'INSERT INTO feedback (user_id, name, message) VALUES (:uid, :n, :m)'
                     );
                     $stmt->execute([
-                        ':uid' => $_SESSION['user_id'] ?? null,
+                        ':uid' => isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null,
                         ':n'   => $name,
                         ':m'   => $message,
                     ]);

@@ -174,10 +174,11 @@ function captcha_widget_html(string $form): string
     return '<div class="cf-turnstile mt-3 mb-3" data-sitekey="' . e(captcha_site_key()) . '"></div>';
 }
 
-function verify_turnstile_response(?string $token, ?string $ip = null): array
+function verify_turnstile_response(mixed $token = null, mixed $ip = null): array
 {
     $secret = captcha_secret_key();
     $token = is_string($token) ? trim($token) : '';
+    $ip = is_string($ip) && $ip !== '' ? $ip : client_ip();
     $bypass = getenv('CAT2_CAPTCHA_TEST_BYPASS');
     if (is_string($bypass) && $bypass !== '' && $token !== '' && hash_equals($bypass, $token)) {
         return [true, 'test_bypass'];
@@ -189,7 +190,7 @@ function verify_turnstile_response(?string $token, ?string $ip = null): array
     $payload = http_build_query([
         'secret' => $secret,
         'response' => $token,
-        'remoteip' => $ip ?? client_ip(),
+        'remoteip' => $ip,
     ]);
 
     $responseBody = null;
@@ -400,8 +401,21 @@ function maybe_prune_security_records(PDO $pdo): void
     }
 }
 
-function log_activity(string $eventType, ?string $details = null, ?int $userId = null): void
+function log_activity(mixed $eventType, mixed $details = null, mixed $userId = null): void
 {
+    $eventType = is_string($eventType) ? $eventType : (is_scalar($eventType) ? (string)$eventType : '');
+    if (is_array($details) || is_object($details) || is_resource($details)) {
+        $details = null;
+    } elseif ($details !== null && !is_string($details)) {
+        $details = (string)$details;
+    }
+    if (is_int($userId)) {
+        // keep
+    } elseif (is_numeric($userId)) {
+        $userId = (int)$userId;
+    } else {
+        $userId = null;
+    }
     try {
         $pdo = db();
         $stmt = $pdo->prepare(
@@ -420,9 +434,19 @@ function log_activity(string $eventType, ?string $details = null, ?int $userId =
     }
 }
 
-function recent_event_count(string $eventType, int $minutes, ?int $userId = null, bool $ipOnly = false): int
+function recent_event_count(mixed $eventType, mixed $minutes, mixed $userId = null, mixed $ipOnly = false): int
 {
-    $minutes = max(0, (int)$minutes);
+    $eventType = is_string($eventType) ? $eventType : (is_scalar($eventType) ? (string)$eventType : '');
+    $minutes = is_int($minutes) ? $minutes : (is_numeric($minutes) ? (int)$minutes : 0);
+    $minutes = max(0, $minutes);
+    if (is_int($userId)) {
+        // keep
+    } elseif (is_numeric($userId)) {
+        $userId = (int)$userId;
+    } else {
+        $userId = null;
+    }
+    $ipOnly = (bool)$ipOnly;
     try {
         $pdo = db();
         if ($ipOnly || $userId === null) {
@@ -450,9 +474,9 @@ function recent_event_count(string $eventType, int $minutes, ?int $userId = null
     }
 }
 
-function acquire_form_ip_lock(PDO $pdo, ?string $ip = null): ?string
+function acquire_form_ip_lock(PDO $pdo, mixed $ip = null): ?string
 {
-    $ip = $ip ?? client_ip();
+    $ip = is_string($ip) && $ip !== '' ? $ip : client_ip();
     $name = substr('form_' . hash('sha256', 'ip|' . $ip), 0, 64);
     try {
         $stmt = $pdo->prepare('SELECT GET_LOCK(:name, 10) AS got');
@@ -467,9 +491,9 @@ function acquire_form_ip_lock(PDO $pdo, ?string $ip = null): ?string
     return null;
 }
 
-function release_form_ip_lock(PDO $pdo, ?string $name): void
+function release_form_ip_lock(PDO $pdo, mixed $name): void
 {
-    if ($name === null) {
+    if (!is_string($name) || $name === '') {
         return;
     }
     try {
@@ -488,10 +512,10 @@ function normalize_email(mixed $email): string
     return strtolower(trim($email));
 }
 
-function current_login_failure_count(string $username): int
+function current_login_failure_count(mixed $username): int
 {
     $windowMinutes = 15;
-    $username = substr($username, 0, 100);
+    $username = is_string($username) ? substr($username, 0, 100) : '';
     $ip = client_ip();
     try {
         $stmt = db()->prepare(
@@ -507,8 +531,9 @@ function current_login_failure_count(string $username): int
     }
 }
 
-function login_challenge_required(string $username): bool
+function login_challenge_required(mixed $username): bool
 {
+    $username = is_string($username) ? $username : '';
     return current_login_failure_count($username) >= 2;
 }
 
@@ -552,8 +577,10 @@ function login_challenge_valid($answer): bool
     return $ok;
 }
 
-function acquire_login_locks(PDO $pdo, string $username, string $ip): array
+function acquire_login_locks(PDO $pdo, mixed $username, mixed $ip): array
 {
+    $username = is_string($username) ? $username : '';
+    $ip = is_string($ip) && $ip !== '' ? $ip : client_ip();
     $names = [
         substr('lu_' . hash('sha256', 'u|' . $username), 0, 64),
         substr('li_' . hash('sha256', 'i|' . $ip), 0, 64),
@@ -589,17 +616,18 @@ function release_login_locks(PDO $pdo, array $names): void
     }
 }
 
-function begin_login_attempt(string $username): array
+function begin_login_attempt(mixed $username): array
 {
     // Reserve admission before password verification so concurrent attempts for the
     // same username or IP cannot all pass the throttle check in parallel.
     $windowMinutes = 15;
     $maxFailures = 5;
-    $username = substr($username, 0, 100);
+    $username = is_string($username) ? substr($username, 0, 100) : '';
     $ip = client_ip();
-    $pdo = db();
+    $pdo = null;
     $locks = [];
     try {
+        $pdo = db();
         $locks = acquire_login_locks($pdo, $username, $ip);
 
         $windowMinutes = (int)$windowMinutes;

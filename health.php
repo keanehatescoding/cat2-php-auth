@@ -15,7 +15,7 @@ if ($token !== '') {
         $headers = function_exists('getallheaders') ? getallheaders() : (function_exists('apache_request_headers') ? apache_request_headers() : []);
         if (is_array($headers)) {
             foreach ($headers as $name => $value) {
-                if (strcasecmp((string)$name, 'Authorization') === 0) {
+                if (is_string($value) && strcasecmp((string)$name, 'Authorization') === 0) {
                     $auth = $value;
                     break;
                 }
